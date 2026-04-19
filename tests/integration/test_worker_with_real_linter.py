@@ -66,8 +66,12 @@ tools: []
 
 # evil
 
-Nothing useful here, and no required sections.
-"""
+Nothing useful here, and no required sections. The body is intentionally long
+enough to clear the Worker's minimum-length pre-check so the request reaches
+the real linter, which must still reject it for missing the mandatory
+Korean-named sections (핵심 역할, 작업 원칙, 입력/출력 프로토콜, 에러 핸들링,
+자가 검증). Padding follows so the byte count exceeds the 200-char floor:
+""" + ("filler. " * 40)
 
 
 def _mkstate(agent_id, registry):

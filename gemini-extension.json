@@ -1,6 +1,6 @@
 {
   "name": "gemini-harness",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Team-architecture factory for Gemini CLI — port of revfactory/harness v1.2.0. Build, audit, verify, evolve, and run agent teams generated from one-sentence domain descriptions.",
   "contextFileName": "GEMINI.md",
   "mcpServers": {

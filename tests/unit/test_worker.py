@@ -116,7 +116,13 @@ def test_worker_creates_agents_when_linter_passes(tmp_path):
                         "id": "child1",
                         "role": "a nested role that is long enough",
                         "system_prompt_path": ".agents/child1/SYSTEM_PROMPT.md",
-                        "system_prompt_body": "# child1\n",
+                        "system_prompt_body": (
+                            "# child1\n\n## 핵심 역할\n테스트용 자식 에이전트.\n\n"
+                            "## 작업 원칙\n1. 검증.\n2. 재현.\n\n"
+                            "## 입력/출력 프로토콜\ninbox / artifacts.\n\n"
+                            "## 에러 핸들링\nManager로 복귀.\n\n"
+                            "## 자가 검증\n결과 shape 확인.\n"
+                        ) + ("pad. " * 40),
                     }
                 ],
                 "event_summary": "spawned child1",
@@ -149,6 +155,11 @@ def test_worker_rejects_create_agent_when_linter_fails(tmp_path):
                         "id": "bad",
                         "role": "x",
                         "system_prompt_path": ".agents/bad/SYSTEM_PROMPT.md",
+                        "system_prompt_body": (
+                            "# bad\n\n## 핵심 역할\nX.\n\n## 작업 원칙\n1.\n\n"
+                            "## 입력/출력 프로토콜\nx\n\n## 에러 핸들링\nx\n\n"
+                            "## 자가 검증\nx\n"
+                        ) + ("pad. " * 40),
                     }
                 ],
                 "event_summary": "tried to spawn",

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gemini-harness"
-version = "0.1.1"
+version = "0.1.2"
 description = "Port of revfactory/harness to Gemini CLI + LangGraph. Generates team-of-agents architectures for any project."
 readme = "README.md"
 license = { text = "Apache-2.0" }

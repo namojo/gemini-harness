@@ -99,11 +99,51 @@ def _read_system_prompt(repo_root: Path, rel_path: str) -> str:
     return target.read_text(encoding="utf-8")
 
 
+def _relevant_recent_errors(
+    all_errors: list[Any],
+    *,
+    agent_id: str,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    """Pick the most recent errors the current agent can act on.
+
+    Two bucket rule:
+      1. Action-specific errors (``create_agent_*``, ``create_skill_*``,
+         ``artifact_*``, ``tool_iter_exhausted``) are ALWAYS relevant — the
+         ``id`` on these errors refers to the thing the agent tried to
+         create, not the agent itself, so filtering by ``agent_id`` would
+         hide exactly the feedback that lets the LLM self-correct.
+      2. Agent-scoped errors (``system_prompt_error`` etc.) are only
+         relevant when their ``agent`` field matches ``agent_id``.
+    """
+    ACTIONABLE_PREFIXES = ("create_agent", "create_skill", "artifact_")
+    relevant: list[dict[str, Any]] = []
+    for err in reversed(all_errors or []):
+        if not isinstance(err, dict):
+            relevant.append({"kind": "note", "detail": str(err)[:500]})
+        else:
+            kind = err.get("kind", "")
+            if (
+                kind.startswith(ACTIONABLE_PREFIXES)
+                or kind == "tool_iter_exhausted"
+            ):
+                relevant.append(err)
+            else:
+                owner = err.get("agent")
+                if owner in (None, agent_id):
+                    relevant.append(err)
+        if len(relevant) >= limit:
+            break
+    return list(reversed(relevant))
+
+
 def _compose_prompt(
     agent: AgentMetadata,
     inbox_messages: list[Message],
     tool_results: dict[str, Any],
     workflow_summary: str,
+    *,
+    recent_errors: list[dict[str, Any]] | None = None,
 ) -> str:
     lines: list[str] = []
     lines.append("## role")
@@ -126,6 +166,15 @@ def _compose_prompt(
         for call_id, result in tool_results.items():
             lines.append(f"- id={call_id}: {json.dumps(result, default=str)[:2000]}")
         lines.append("")
+    if recent_errors:
+        lines.append("## previous_errors")
+        lines.append(
+            "Your previous attempts produced these errors. DO NOT repeat the same "
+            "mistakes; adjust your next response to fix them:"
+        )
+        for err in recent_errors:
+            lines.append(f"- {json.dumps(err, ensure_ascii=False, default=str)[:1500]}")
+        lines.append("")
     lines.append("## instruction")
     lines.append(
         "Respond with a JSON object. Fields: "
@@ -133,6 +182,19 @@ def _compose_prompt(
         "create_skills (list, optional), send_messages (list, optional), "
         "artifacts (list[{path, content}], optional), status_update (str, optional), "
         "test_passed (bool, optional), event_summary (str)."
+    )
+    lines.append("")
+    lines.append("## create_agents requirements (strict)")
+    lines.append(
+        "If you emit `create_agents`, each entry MUST include: "
+        "`id` (lowercase slug, ^[a-z][a-z0-9-]*$), "
+        "`name`, `role` (>=10 chars), "
+        "`system_prompt_path` (must be under `.agents/{id}/SYSTEM_PROMPT.md`), "
+        "`system_prompt_body` (full Markdown body, WITHOUT frontmatter, >=400 chars, "
+        "containing sections: `## 핵심 역할`, `## 작업 원칙`, `## 입력/출력 프로토콜`, "
+        "`## 에러 핸들링`, `## 자가 검증`). "
+        "We add YAML frontmatter mechanically — you must not include it. "
+        "Entries missing `system_prompt_body` will be REJECTED — do not omit it."
     )
     return "\n".join(lines)
 
@@ -264,6 +326,9 @@ def make_worker_node(deps: WorkerDeps):
             inbox_messages=inbox_messages,
             tool_results=state.get("tool_results") or {},
             workflow_summary=workflow_summary,
+            recent_errors=_relevant_recent_errors(
+                state.get("errors") or [], agent_id=agent_id
+            ),
         )
 
         temperature = float(agent.get("temperature", 0.7))
@@ -326,17 +391,46 @@ def make_worker_node(deps: WorkerDeps):
                 )
                 continue
             raw_body = entry.get("system_prompt_body")
-            if not isinstance(raw_body, str) or not raw_body.strip():
-                raw_body = (
-                    f"---\nname: {entry['id']}\n"
-                    f"version: 1.0\n"
-                    f"model: {entry.get('model', 'gemini-3.1-pro-preview')}\n"
-                    f"tools: []\n---\n\n"
-                    f"# {entry.get('name', entry['id'])}\n\n"
-                    f"## 핵심 역할\n\n{entry.get('role', '')}\n\n"
-                    f"## 자가 검증\n\nTODO\n"
+            if not isinstance(raw_body, str) or len(raw_body.strip()) < 200:
+                # Do NOT fabricate a minimal body — that silently produced
+                # agents that always failed the linter and put the graph in
+                # an infinite retry loop. Surface a concrete error so the
+                # next prompt can feed it back to the LLM.
+                errors.append(
+                    {
+                        "kind": "create_agent_missing_body",
+                        "id": entry["id"],
+                        "detail": (
+                            "system_prompt_body is missing or too short "
+                            "(need >= 200 chars). Provide the full Markdown "
+                            "body with sections '## 핵심 역할', '## 작업 원칙', "
+                            "'## 입력/출력 프로토콜', '## 에러 핸들링', '## 자가 검증'."
+                        ),
+                    }
                 )
-            frontmatter, body = _split_frontmatter(raw_body)
+                continue
+            # If the model accidentally included YAML frontmatter, strip it —
+            # we add our own mechanically with the resolved model/version.
+            if raw_body.lstrip().startswith("---"):
+                _, raw_body = _split_frontmatter(raw_body)
+            # Build the canonical on-disk text with our frontmatter.
+            from ..config import get_model as _get_model
+            _model = entry.get("model") or _get_model()
+            _tools = entry.get("tools") or []
+            _tools_str = "[" + ", ".join(_tools) + "]" if _tools else "[]"
+            canonical_text = (
+                "---\n"
+                f"name: {entry['id']}\n"
+                'version: "1.0"\n'
+                f"model: {_model}\n"
+                f"tools: {_tools_str}\n"
+                "---\n\n"
+                f"{raw_body.rstrip()}\n"
+            )
+            # Re-parse the canonical version so the linter sees the real
+            # frontmatter we'll persist.
+            frontmatter, body = _split_frontmatter(canonical_text)
+            raw_body = canonical_text
             lint = deps.linter.lint_agent(frontmatter, body, entry)
             if not getattr(lint, "passed", False):
                 errors.append(
@@ -434,6 +528,10 @@ def make_worker_node(deps: WorkerDeps):
                 "node": "worker",
                 "kind": "worker_complete",
                 "summary": str(parsed.get("event_summary", ""))[:500],
+                "create_agent_errors": sum(
+                    1 for e in errors if e.get("kind", "").startswith("create_agent")
+                ),
+                "agents_added": len(new_registry),
             }
         )
 

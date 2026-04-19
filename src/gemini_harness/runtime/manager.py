@@ -75,9 +75,57 @@ def _just_finished_tool_executor(state: HarnessState) -> bool:
     return history[-1].get("kind") == "tool_executor_complete"
 
 
+def _stuck_on_create_agents(state: HarnessState, *, threshold: int = 3) -> str | None:
+    """Detect consecutive worker_complete events for the same agent that produced
+    `create_agent_*` errors and no actual registry additions. Returns the stuck
+    agent id, or None. Once threshold is reached the Manager should stop routing
+    back and terminate with an escalate error — otherwise the graph loops
+    indefinitely retrying the same malformed spec.
+    """
+    history = state.get("history") or []
+    streak = 0
+    culprit: str | None = None
+    for event in reversed(history):
+        if event.get("node") != "worker" or event.get("kind") != "worker_complete":
+            continue
+        err_count = int(event.get("create_agent_errors", 0) or 0)
+        added = int(event.get("agents_added", 0) or 0)
+        agent = event.get("agent")
+        if err_count > 0 and added == 0 and agent:
+            if culprit is None:
+                culprit = agent
+            if agent == culprit:
+                streak += 1
+                if streak >= threshold:
+                    return culprit
+                continue
+        break
+    return None
+
+
 def manager_node(state: HarnessState) -> Command:
     if state.get("pending_tool_calls"):
         return Command(goto="tool_executor")
+
+    stuck_agent = _stuck_on_create_agents(state)
+    if stuck_agent is not None:
+        return Command(
+            goto=END,
+            update={
+                "errors": [
+                    {
+                        "kind": "create_agent_loop_aborted",
+                        "agent": stuck_agent,
+                        "detail": (
+                            f"{stuck_agent} produced create_agent errors on 3 "
+                            "consecutive turns without adding any agents. "
+                            "Aborting to prevent an infinite retry loop — check "
+                            "the agent's system prompt and linter_spec."
+                        ),
+                    }
+                ]
+            },
+        )
 
     tool_iterations = state.get("tool_iterations", 0)
     max_tool_iters = _max_tool_iterations(state)

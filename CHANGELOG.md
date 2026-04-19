@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-04-19
+
+### Fixed
+- **`create_agents` infinite-retry loop** (reported in v0.1.0 real-world usage).
+  When Gemini's response omitted `system_prompt_body`, the Worker silently
+  fabricated a short placeholder that always failed the linter → Manager
+  kept routing back to the same agent → "팀원들이 계속 출근 카드만 찍는"
+  symptom. Fix:
+  - Worker no longer fabricates a placeholder body. `system_prompt_body`
+    missing or <200 chars yields a specific `create_agent_missing_body`
+    error that is fed back to the next prompt.
+  - Worker strips any YAML frontmatter the LLM accidentally included in
+    `system_prompt_body`, then wraps with the canonical frontmatter we
+    resolve from `config.get_model()`.
+  - Prompt composer adds a `## previous_errors` section so the LLM sees
+    exactly what went wrong on its last turn. `create_agent_*` /
+    `create_skill_*` / `artifact_*` errors are always surfaced (they are
+    actionable feedback for the current agent, regardless of the failing
+    entry's `id`).
+  - Prompt composer adds a `## create_agents requirements (strict)`
+    section enumerating every mandatory field and section so the first
+    attempt has a much better chance of passing.
+  - Manager loop-guard: if the same agent produces `create_agent_*` errors
+    on 3 consecutive `worker_complete` events without adding any agent,
+    Manager terminates with `create_agent_loop_aborted` instead of routing
+    back to Worker again.
+
+### Added
+- 5 regression tests in `tests/unit/test_create_agent_loop_guard.py`
+  covering missing-body rejection, error feedback in prompts, and the
+  three loop-guard scenarios (abort / streak reset / different agents).
+
 ## [0.1.1] - 2026-04-19
 
 ### Fixed

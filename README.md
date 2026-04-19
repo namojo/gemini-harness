@@ -72,8 +72,6 @@ gemini extensions install /path/to/gemini-harness
 
 ```env
 GOOGLE_API_KEY=your_api_key_here
-# 선택: 모델 오버라이드
-LANGCHAIN_HARNESS_MODEL=gemini-3.1-pro-preview
 ```
 
 또는 환경변수로:
@@ -82,7 +80,46 @@ LANGCHAIN_HARNESS_MODEL=gemini-3.1-pro-preview
 export GOOGLE_API_KEY=your_api_key_here
 ```
 
-### 4) 설치 확인
+### 4) 최초 1회 — 모델 선택
+
+설치 직후 **한 번만** 실행하여 사용할 Gemini 모델을 선택합니다. API 키로 접근 가능한 모델 목록을 실제로 조회하고 그 중에서 고를 수 있습니다.
+
+```bash
+gemini-harness configure
+```
+
+예시 출력:
+```
+Fetching available Gemini models from your API key...
+
+Available models:
+ *  1. gemini-3.1-pro-preview
+    2. gemini-2.5-pro
+    3. gemini-2.5-flash
+    4. gemini-2.0-pro
+    ...
+
+Current selection: gemini-3.1-pro-preview
+Enter the number of the model to use (blank = keep current):
+>
+```
+
+저장 위치: `$XDG_CONFIG_HOME/gemini-harness/config.json` (기본 `~/.config/gemini-harness/config.json`, 권한 `0600`).
+
+이후 모델을 바꾸고 싶으면 같은 명령을 다시 실행하거나, 한 번만 오버라이드하고 싶으면 환경변수를 쓰세요:
+
+```bash
+# 현재 설정 확인
+gemini-harness configure --show
+
+# 대화 없이 즉시 변경
+gemini-harness configure --model gemini-2.5-pro
+
+# 일회성 오버라이드 (환경변수가 config보다 우선)
+LANGCHAIN_HARNESS_MODEL=gemini-2.0-flash gemini-harness run --project . --input "..."
+```
+
+### 5) 설치 확인
 
 ```bash
 gemini   # REPL 진입 후:

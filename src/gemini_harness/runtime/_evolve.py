@@ -10,6 +10,12 @@ its change-log table.
 """
 from __future__ import annotations
 
+
+def _resolve_model() -> str:
+    from ..config import get_model
+    return get_model()
+
+
 import difflib
 import json
 import os
@@ -125,7 +131,7 @@ def _unified_diff(old: str, new: str, path: str) -> str:
 
 
 def _wrap_system_prompt(agent_id: str, tools: list[str], body: str) -> str:
-    model = os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview")
+    model = _resolve_model()
     tools_str = "[" + ", ".join(tools) + "]" if tools else "[]"
     return (
         "---\n"
@@ -190,7 +196,7 @@ def _apply_changes(
                 {
                     "name": target,
                     "version": "1.0",
-                    "model": os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview"),
+                    "model": _resolve_model(),
                     "tools": list(agent.get("tools", []) or []),
                 },
                 new_content,
@@ -237,7 +243,7 @@ def _apply_changes(
                 {
                     "name": aid,
                     "version": "1.0",
-                    "model": os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview"),
+                    "model": _resolve_model(),
                     "tools": new_agent_meta["tools"],
                 },
                 body,
@@ -414,7 +420,7 @@ def run_evolve(
         raise EvolveError("INVALID_INPUT: " + "; ".join(scope_errors))
 
     client = gemini_client or _default_gemini_client()
-    model = os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview")
+    model = _resolve_model()
 
     user_prompt_parts = [
         _compose_context(root, workflow),

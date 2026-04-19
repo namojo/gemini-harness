@@ -109,6 +109,21 @@ def _build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--resume", action="store_true")
     p_run.add_argument("--step-limit", type=int, default=200)
 
+    p_configure = sub.add_parser(
+        "configure",
+        help="One-time setup: pick the Gemini model to use. Writes to $XDG_CONFIG_HOME/gemini-harness/config.json.",
+    )
+    p_configure.add_argument(
+        "--model",
+        default=None,
+        help="Set a specific model without the interactive prompt (skips API probe).",
+    )
+    p_configure.add_argument(
+        "--show",
+        action="store_true",
+        help="Print the current config path + resolved model and exit.",
+    )
+
     return p
 
 
@@ -217,12 +232,93 @@ def _cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_configure(args: argparse.Namespace) -> int:
+    """Interactive one-time model selection.
+
+    Priority: ``--model`` > interactive prompt backed by ``list_available_models``.
+    Writes to ``$XDG_CONFIG_HOME/gemini-harness/config.json`` (chmod 0600).
+    """
+    from gemini_harness.config import (
+        DEFAULT_MODEL,
+        ENV_MODEL,
+        config_path,
+        get_model,
+        list_available_models,
+        load_config,
+        set_model,
+    )
+
+    cfg = load_config()
+    if args.show:
+        print(f"config path: {config_path()}")
+        print(f"exists:      {config_path().exists()}")
+        print(f"env {ENV_MODEL}: {os.environ.get(ENV_MODEL) or '(unset)'}")
+        print(f"stored model: {cfg.get('model') or '(unset)'}")
+        print(f"resolved:     {get_model()}")
+        return 0
+
+    if args.model:
+        path = set_model(args.model)
+        print(f"✓ Saved model={args.model!r} → {path}")
+        return 0
+
+    # Interactive path — probe the API for real availability.
+    print("Fetching available Gemini models from your API key...")
+    available = list_available_models()
+    if not available:
+        print(
+            "⚠️  Could not list models (no API key? offline?). "
+            f"Falling back to built-in defaults. Default will be: {DEFAULT_MODEL}",
+            file=sys.stderr,
+        )
+        set_model(DEFAULT_MODEL)
+        return 0
+
+    current = cfg.get("model") or DEFAULT_MODEL
+    print()
+    print("Available models:")
+    for i, name in enumerate(available, 1):
+        marker = "   "
+        if name == current:
+            marker = " * "
+        print(f"{marker}{i:>2}. {name}")
+    print()
+    print(f"Current selection: {current}")
+    print("Enter the number of the model to use (blank = keep current):")
+    try:
+        raw = input("> ").strip()
+    except (EOFError, KeyboardInterrupt):
+        print("\nCancelled. No changes saved.")
+        return 130
+    if not raw:
+        print(f"✓ Keeping current selection: {current}")
+        if not cfg.get("model"):
+            # First run but user pressed enter — persist the default so we don't
+            # re-prompt next time.
+            set_model(current)
+        return 0
+    try:
+        idx = int(raw)
+    except ValueError:
+        print(f"Invalid input: {raw!r} — aborting.", file=sys.stderr)
+        return 2
+    if not 1 <= idx <= len(available):
+        print(f"Out of range (1..{len(available)}).", file=sys.stderr)
+        return 2
+    choice = available[idx - 1]
+    path = set_model(choice)
+    print(f"✓ Saved model={choice!r} → {path}")
+    print("You can change this later with `gemini-harness configure`.")
+    return 0
+
+
 _COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
     "audit": _cmd_audit,
     "build": _cmd_build,
     "verify": _cmd_verify,
     "evolve": _cmd_evolve,
     "run": _cmd_run,
+    "configure": _cmd_configure,
 }
 
 

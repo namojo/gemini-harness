@@ -271,12 +271,61 @@ def _load_runtime_fn(attr: str) -> Callable[..., Any]:
 
 
 async def _call_runtime(attr: str, **kwargs: Any) -> Any:
-    """Invoke a runtime entry point, awaiting if it is a coroutine."""
+    """Invoke a runtime entry point, awaiting if it is a coroutine.
+
+    Sync functions are offloaded to a worker thread so the MCP event loop
+    remains responsive to progress notifications from the runtime and
+    session-level cancellation requests.
+    """
     fn = _load_runtime_fn(attr)
-    result = fn(**kwargs)
-    if inspect.isawaitable(result):
-        result = await result
-    return result
+    if inspect.iscoroutinefunction(fn):
+        return await fn(**kwargs)
+    return await asyncio.to_thread(fn, **kwargs)
+
+
+def _make_progress_cb(
+    server: Server,
+) -> tuple[Any, Any]:
+    """Extract progress_token from the active MCP request context and return
+    ``(progress_callback, label_token)`` where ``progress_callback`` is a sync
+    function safe to call from worker threads. Returns ``(None, None)`` if the
+    client did not request progress.
+    """
+    try:
+        ctx = server.request_context  # type: ignore[attr-defined]
+    except LookupError:
+        return None, None
+    meta = getattr(ctx, "meta", None)
+    token = None
+    if meta is not None:
+        token = getattr(meta, "progress_token", None) or getattr(meta, "progressToken", None)
+    if token is None:
+        return None, None
+
+    session = getattr(ctx, "session", None)
+    if session is None:
+        return None, None
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return None, None
+
+    def cb(progress: float, total: float | None, message: str | None = None) -> None:
+        try:
+            asyncio.run_coroutine_threadsafe(
+                session.send_progress_notification(
+                    progress_token=token,
+                    progress=float(progress),
+                    total=float(total) if total is not None else None,
+                    message=message,
+                ),
+                loop,
+            )
+        except Exception:
+            pass  # progress is best-effort
+
+    return cb, token
 
 
 def _invoke_workflow_linter(workflow_path: Path) -> dict[str, Any]:
@@ -360,8 +409,9 @@ def _build_server() -> Server:
             return _build_error_result(
                 "INVALID_INPUT", f"unknown tool {name!r}"
             )
+        progress_cb, _ = _make_progress_cb(server)
         try:
-            return await handler(arguments or {})
+            return await handler(arguments or {}, progress_cb=progress_cb)
         except Exception as exc:  # noqa: BLE001
             _log.exception("tool handler %s crashed", name)
             return _build_error_result(
@@ -376,7 +426,11 @@ def _build_server() -> Server:
 # ------------------------- Tool handlers -------------------------
 
 
-async def _handle_audit(arguments: dict[str, Any]) -> types.CallToolResult:
+async def _handle_audit(
+    arguments: dict[str, Any],
+    *,
+    progress_cb: Callable[..., None] | None = None,
+) -> types.CallToolResult:
     project_path = arguments.get("project_path", "")
     ok, err = _validate_project_path(project_path)
     if not ok:
@@ -398,7 +452,11 @@ async def _handle_audit(arguments: dict[str, Any]) -> types.CallToolResult:
     return _ok_result(result)
 
 
-async def _handle_build(arguments: dict[str, Any]) -> types.CallToolResult:
+async def _handle_build(
+    arguments: dict[str, Any],
+    *,
+    progress_cb: Callable[..., None] | None = None,
+) -> types.CallToolResult:
     project_path = arguments.get("project_path", "")
     ok, err = _validate_project_path(project_path)
     if not ok:
@@ -458,7 +516,11 @@ async def _handle_build(arguments: dict[str, Any]) -> types.CallToolResult:
     return _ok_result(result)
 
 
-async def _handle_verify(arguments: dict[str, Any]) -> types.CallToolResult:
+async def _handle_verify(
+    arguments: dict[str, Any],
+    *,
+    progress_cb: Callable[..., None] | None = None,
+) -> types.CallToolResult:
     project_path = arguments.get("project_path", "")
     ok, err = _validate_project_path(project_path)
     if not ok:
@@ -494,7 +556,11 @@ async def _handle_verify(arguments: dict[str, Any]) -> types.CallToolResult:
     return _ok_result(result)
 
 
-async def _handle_evolve(arguments: dict[str, Any]) -> types.CallToolResult:
+async def _handle_evolve(
+    arguments: dict[str, Any],
+    *,
+    progress_cb: Callable[..., None] | None = None,
+) -> types.CallToolResult:
     project_path = arguments.get("project_path", "")
     ok, err = _validate_project_path(project_path)
     if not ok:
@@ -531,7 +597,11 @@ async def _handle_evolve(arguments: dict[str, Any]) -> types.CallToolResult:
     return _ok_result(result)
 
 
-async def _handle_run(arguments: dict[str, Any]) -> types.CallToolResult:
+async def _handle_run(
+    arguments: dict[str, Any],
+    *,
+    progress_cb: Callable[..., None] | None = None,
+) -> types.CallToolResult:
     project_path = arguments.get("project_path", "")
     ok, err = _validate_project_path(project_path)
     if not ok:
@@ -548,15 +618,18 @@ async def _handle_run(arguments: dict[str, Any]) -> types.CallToolResult:
             "no workflow.json at project_path",
         )
 
+    runtime_kwargs: dict[str, Any] = dict(
+        project_path=project_path,
+        user_input=user_input,
+        run_id=arguments.get("run_id"),
+        resume=bool(arguments.get("resume", False)),
+        step_limit=int(arguments.get("step_limit", 200)),
+    )
+    if progress_cb is not None:
+        runtime_kwargs["progress_callback"] = progress_cb
+
     try:
-        result = await _call_runtime(
-            "run_harness",
-            project_path=project_path,
-            user_input=user_input,
-            run_id=arguments.get("run_id"),
-            resume=bool(arguments.get("resume", False)),
-            step_limit=int(arguments.get("step_limit", 200)),
-        )
+        result = await _call_runtime("run_harness", **runtime_kwargs)
     except RuntimeError as exc:
         return _build_error_result(
             "INTERNAL",

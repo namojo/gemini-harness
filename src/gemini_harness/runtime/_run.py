@@ -10,6 +10,12 @@ incrementally via streaming.
 """
 from __future__ import annotations
 
+
+def _resolve_model() -> str:
+    from ..config import get_model
+    return get_model()
+
+
 import json
 import os
 import time
@@ -18,19 +24,25 @@ from pathlib import Path
 from typing import Any
 
 from ._audit import _load_workflow
-from .compat import SqliteSaver, StateGraph, START
+from .compat import AsyncSqliteSaver, SqliteSaver, StateGraph, START
 from .manager import manager_node
 from .state import HarnessState, initial_state
 from .tool_executor import ToolExecutorDeps, make_tool_executor_node
-from .worker import WorkerDeps, make_worker_node
+from .worker import WorkerDeps, make_aworker_node, make_worker_node
 
 
-def _build_graph_local(worker_deps, tool_executor_deps, checkpointer):
+def _build_graph_local(worker_deps, tool_executor_deps, checkpointer, *, async_worker: bool = False):
     """Mirror of harness_runtime.build_harness_graph, placed here to avoid
-    circular imports between _run and harness_runtime."""
+    circular imports between _run and harness_runtime.
+
+    When ``async_worker`` is True, the worker node is an async wrapper that
+    offloads the sync Gemini call to a thread — this unlocks true wall-clock
+    parallelism for ``Send``-based fan-out when driven by ``astream``/``ainvoke``.
+    """
     graph = StateGraph(HarnessState)
     graph.add_node("manager", manager_node)
-    graph.add_node("worker", make_worker_node(worker_deps))
+    worker_fn = make_aworker_node(worker_deps) if async_worker else make_worker_node(worker_deps)
+    graph.add_node("worker", worker_fn)
     if tool_executor_deps is not None:
         graph.add_node("tool_executor", make_tool_executor_node(tool_executor_deps))
     graph.add_edge(START, "manager")
@@ -275,12 +287,18 @@ def run_harness(
     step_limit: int | None = None,
     gemini_callable: Any | None = None,
     linter: Any | None = None,
+    progress_callback: Any | None = None,
 ) -> dict:
     """Execute the generated harness graph against user_input. Returns summary.
 
     ``gemini_callable`` and ``linter`` are overridable for tests. Production
     callers leave them None; the real ``GeminiClient`` and ``meta.linter`` are
     wired automatically.
+
+    ``progress_callback`` (optional, sync signature ``(progress, total, message)``)
+    is invoked after each streaming chunk. MCP handlers wire it to
+    ``session.send_progress_notification`` so Gemini CLI's HUD shows which
+    agent is currently active.
     """
     root = Path(project_path).resolve()
     _load_dotenv(root)
@@ -297,7 +315,7 @@ def run_harness(
         )
 
     run_id = run_id or "run-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    model = os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview")
+    model = _resolve_model()
 
     if gemini_callable is None:
         gemini_callable = _make_gemini_callable(model, run_id)
@@ -326,31 +344,97 @@ def run_harness(
     errors: list[str] = []
     final_state: dict = {}
 
-    with _open_sqlite_cm(str(checkpoint_path)) as checkpointer:
-        app = _build_graph_local(
-            worker_deps=worker_deps,
-            tool_executor_deps=tool_executor_deps,
-            checkpointer=checkpointer,
-        )
+    # Detect fan-out/parallel-capable patterns — use async worker so multiple
+    # Send dispatches execute truly concurrently (wall-clock parallel).
+    pattern = str(workflow.get("pattern", "") or "")
+    needs_parallel = (
+        "fan_out_fan_in" in pattern
+        or "supervisor" in pattern
+        or "+" in pattern  # composite patterns may contain parallel phases
+    )
+    if needs_parallel and AsyncSqliteSaver is None:
+        # Installed langgraph-checkpoint-sqlite lacks async variant — fall back.
+        needs_parallel = False
 
-        seed = initial_state(workflow, run_id=run_id)
-        seed = _seed_user_input(seed, user_input)
+    seed = initial_state(workflow, run_id=run_id)
+    seed = _seed_user_input(seed, user_input)
 
-        config = {
-            "configurable": {"thread_id": run_id},
-            "recursion_limit": step_limit if step_limit is not None else 50,
-        }
+    config = {
+        "configurable": {"thread_id": run_id},
+        "recursion_limit": step_limit if step_limit is not None else 50,
+    }
 
+    def _emit_progress(seen: int, chunk: dict) -> None:
+        if progress_callback is None:
+            return
+        # Build a short label from the chunk: node name + current_target if present.
+        node = next(iter(chunk.keys()), "step")
+        update = chunk.get(node) or {}
+        current = update.get("current_target") if isinstance(update, dict) else None
+        msg = f"{node}" + (f" → {current}" if current else "")
+        total = float(step_limit) if step_limit else None
         try:
-            for chunk in app.stream(seed, config, stream_mode="updates"):
-                chunks_seen += 1
-                _append_context_md(root, run_id, chunk)
-                if step_limit is not None and chunks_seen >= step_limit:
-                    break
-            # Collect terminal state
-            final_state = app.get_state(config).values or {}
-        except Exception as exc:  # noqa: BLE001
-            errors.append(f"{type(exc).__name__}: {exc}")
+            progress_callback(float(seen), total, msg)
+        except Exception:  # best-effort — never block the run on reporting failures
+            pass
+
+    if progress_callback is not None:
+        try:
+            progress_callback(0.0, float(step_limit) if step_limit else None,
+                              f"run start (pattern={pattern or '?'})")
+        except Exception:
+            pass
+
+    if needs_parallel:
+        # Async path: AsyncSqliteSaver + astream + async worker.
+        import asyncio
+
+        async def _run_async() -> dict:
+            seen = 0
+            final_values: dict = {}
+            errs: list[str] = []
+            try:
+                async with AsyncSqliteSaver.from_conn_string(str(checkpoint_path)) as checkpointer:
+                    app = _build_graph_local(
+                        worker_deps=worker_deps,
+                        tool_executor_deps=tool_executor_deps,
+                        checkpointer=checkpointer,
+                        async_worker=True,
+                    )
+                    async for chunk in app.astream(seed, config, stream_mode="updates"):
+                        seen += 1
+                        _append_context_md(root, run_id, chunk)
+                        _emit_progress(seen, chunk)
+                        if step_limit is not None and seen >= step_limit:
+                            break
+                    final_state_snap = await app.aget_state(config)
+                    final_values = final_state_snap.values or {}
+            except Exception as exc:  # noqa: BLE001
+                errs.append(f"{type(exc).__name__}: {exc}")
+            return {"seen": seen, "final": final_values, "errors": errs}
+
+        driven = asyncio.run(_run_async())
+        chunks_seen = driven["seen"]
+        final_state = driven["final"]
+        errors.extend(driven["errors"])
+    else:
+        with _open_sqlite_cm(str(checkpoint_path)) as checkpointer:
+            app = _build_graph_local(
+                worker_deps=worker_deps,
+                tool_executor_deps=tool_executor_deps,
+                checkpointer=checkpointer,
+                async_worker=False,
+            )
+            try:
+                for chunk in app.stream(seed, config, stream_mode="updates"):
+                    chunks_seen += 1
+                    _append_context_md(root, run_id, chunk)
+                    _emit_progress(chunks_seen, chunk)
+                    if step_limit is not None and chunks_seen >= step_limit:
+                        break
+                final_state = app.get_state(config).values or {}
+            except Exception as exc:  # noqa: BLE001
+                errors.append(f"{type(exc).__name__}: {exc}")
 
     wall = int((time.monotonic() - start) * 1000)
     summary = {

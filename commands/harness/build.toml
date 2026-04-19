@@ -10,8 +10,58 @@ prompt = """
 - `max_agents`: 기본 8 (사용자가 별도 지정하지 않으면 생략 가능)
 - `force`: 기존 하네스를 덮어쓸지 여부. 기본 false — 기존 `workflow.json`이 있으면 사용자에게 `force=true`로 재실행할지 확인
 
-호출 후 응답의 `pattern`, `final_registry`, `written_files`, `metrics`를 요약해 사용자에게 보고하세요. 예:
-> `fan_out_fan_in` 패턴 선택됨. 5 에이전트 생성: frontend-architect, backend-architect, ...  총 12개 파일 작성 (43.8s / 1045 입력·2963 출력 토큰).
+## 응답 후 반드시 이렇게 보고하세요 (순서 고정)
 
-이후 "이 하네스를 실행해볼까요?"라고 `/harness:run` 사용을 제안하세요.
+**1단계 — 생성된 하네스 개요:**
+```
+## 🎯 하네스 생성 완료
+
+**패턴:** {pattern}
+**선택 근거:** {rationale — response에 있으면 그대로, 없으면 "domain/agents 추론"}
+**지연:** {metrics.wall_clock_ms / 1000}s · 토큰 {metrics.input_tokens} in / {metrics.output_tokens} out
+```
+
+**2단계 — 각 에이전트 요약 (final_registry 순회):**
+```
+### 👥 에이전트 구성 ({N}명)
+
+| # | ID | 역할 | 도구 |
+|---|-----|------|------|
+| 1 | {id} | {role 첫 80자} | {tools} |
+| 2 | ... |
+```
+
+**3단계 — 스킬 요약 (workflow.json 또는 written_files에서):**
+```
+### 🧰 스킬
+
+- `{skill_name}` — {description 첫 100자}
+```
+
+**4단계 — 라우팅 구성:**
+`routing_config`의 주요 필드(integrator_id / producer_id+reviewer_id / supervisor_id / classifier 등)를 한 줄로 표시.
+
+**5단계 — 생성된 파일 목록:**
+`written_files`를 개수 요약 + 주요 경로 3~5개 (workflow.json, SYSTEM_PROMPT.md 대표 1개, SKILL.md 대표 1개, CLAUDE.md).
+
+**6단계 — 사용자 승인 요청 (자동 실행 금지):**
+다음 문구로 **반드시 종료**하고, 사용자 답변 전에는 다른 도구를 호출하지 않습니다:
+
+```
+---
+
+위 하네스가 기대에 부합하나요?
+
+- ✅ **실행해보려면**: `/harness:run "구체적 실행 지시"` 를 입력해주세요
+- 🔧 **수정이 필요하면**: `/harness:evolve "피드백"` 을 입력해주세요
+- 🔍 **검증을 먼저 하려면**: `/harness:verify` 를 입력해주세요
+- ❌ **처음부터 다시**: `/harness:build "새로운 도메인 설명"` (force=true 필요)
+```
+
+## 금지 사항 (매우 중요)
+
+- build 완료 후 **자동으로 `mcp_harness_harness_run`을 호출하지 말 것**
+- "그럼 실행해볼게요"라고 이어가지 말 것
+- 다음 대화 턴에서 사용자가 명시적으로 요청하기 전까지 대기
+- 사용자가 "실행해줘"라고 하면 그때 `/harness:run` 또는 직접 `mcp_harness_harness_run` 호출
 """

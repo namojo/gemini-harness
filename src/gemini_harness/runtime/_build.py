@@ -12,6 +12,12 @@ Retries up to 3 times with error feedback if linting fails.
 """
 from __future__ import annotations
 
+
+def _resolve_model() -> str:
+    from ..config import get_model
+    return get_model()
+
+
 import json
 import os
 import re
@@ -211,7 +217,7 @@ def _validate_design_against_linter(design: dict, project_path: Path) -> list[st
         frontmatter = {
             "name": a["id"],
             "version": "1.0",
-            "model": os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview"),
+            "model": _resolve_model(),
             "tools": list(a.get("tools", []) or []),
         }
         body = a.get("system_prompt_body", "")
@@ -258,7 +264,7 @@ def _write_harness(design: dict, project_path: Path) -> tuple[list[str], dict]:
     written.append(str(wf_path.resolve()))
 
     # Write each .agents/{id}/SYSTEM_PROMPT.md
-    model = os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview")
+    model = _resolve_model()
     for a in design.get("agents", []):
         sp_path = project_path / ".agents" / a["id"] / "SYSTEM_PROMPT.md"
         sp_path.parent.mkdir(parents=True, exist_ok=True)
@@ -382,7 +388,7 @@ def run_build(
         raise BuildError("domain_description must be at least 20 characters")
 
     run_id = run_id or "build-" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    model = os.environ.get("LANGCHAIN_HARNESS_MODEL", "gemini-3.1-pro-preview")
+    model = _resolve_model()
     client = gemini_client or _default_gemini_client()
 
     start = time.monotonic()

@@ -445,4 +445,29 @@ def make_worker_node(deps: WorkerDeps):
     return worker_node
 
 
-__all__ = ["WorkerDeps", "make_worker_node"]
+def make_aworker_node(deps: WorkerDeps):
+    """Async variant of ``make_worker_node``.
+
+    Identical semantics to the sync worker, but the (sync) ``deps.gemini``
+    call is offloaded to a thread via ``asyncio.to_thread`` so that
+    LangGraph's ``astream`` / ``ainvoke`` runtime can execute multiple
+    ``Send``-dispatched workers truly in parallel (wall-clock concurrency).
+
+    Use this with ``arun_harness`` / ``.astream(...)``. Fan-out/fan-in
+    patterns that would otherwise serialize in sync mode become parallel.
+    """
+    import asyncio
+
+    # Reuse the sync worker logic by composing it. Only the Gemini call is the
+    # blocking point, but the entire worker body runs outside an event loop
+    # so we run the whole thing in a thread — keeps the two implementations
+    # in lockstep without code duplication.
+    sync_worker = make_worker_node(deps)
+
+    async def aworker_node(state: HarnessState) -> dict[str, Any]:
+        return await asyncio.to_thread(sync_worker, state)
+
+    return aworker_node
+
+
+__all__ = ["WorkerDeps", "make_worker_node", "make_aworker_node"]

@@ -31,6 +31,11 @@ except ImportError as exc:  # pragma: no cover - surfaces setup errors early
         "Install with: pip install langgraph-checkpoint-sqlite"
     ) from exc
 
+try:
+    from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+except ImportError:  # pragma: no cover — older langgraph-checkpoint-sqlite
+    AsyncSqliteSaver = None  # type: ignore[assignment]
+
 
 add = _list_add
 
@@ -87,6 +92,7 @@ __all__ = [
     "Command",
     "Send",
     "SqliteSaver",
+    "AsyncSqliteSaver",
     "Version",
     "add",
     "append_unique",

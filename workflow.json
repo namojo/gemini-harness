@@ -1,0 +1,68 @@
+{
+  "version": "1.0",
+  "pattern": "fan_out_fan_in",
+  "retry_limit": 3,
+  "routing_config": {
+    "integrator_id": "review-integrator"
+  },
+  "initial_registry": [
+    {
+      "id": "security-reviewer",
+      "name": "보안 리뷰어",
+      "role": "코드의 보안 취약점, 인젝션 위험, 인증/인가 결함 등을 식별합니다.",
+      "system_prompt_path": ".agents/security-reviewer/SYSTEM_PROMPT.md",
+      "skills": [
+        "code-linter"
+      ],
+      "tools": [
+        "file-manager"
+      ],
+      "status": "idle",
+      "created_at": "2026-04-19T03:07:33+00:00",
+      "created_by": "user"
+    },
+    {
+      "id": "performance-reviewer",
+      "name": "성능 리뷰어",
+      "role": "시간/공간 복잡도, 비효율적인 루프, 메모리 누수 등 성능 병목 구간을 분석합니다.",
+      "system_prompt_path": ".agents/performance-reviewer/SYSTEM_PROMPT.md",
+      "skills": [
+        "code-linter"
+      ],
+      "tools": [
+        "file-manager"
+      ],
+      "status": "idle",
+      "created_at": "2026-04-19T03:07:33+00:00",
+      "created_by": "user"
+    },
+    {
+      "id": "readability-reviewer",
+      "name": "가독성 리뷰어",
+      "role": "클린 코드 원칙, 네이밍 컨벤션, 모듈화 및 유지보수성을 평가합니다.",
+      "system_prompt_path": ".agents/readability-reviewer/SYSTEM_PROMPT.md",
+      "skills": [
+        "code-linter"
+      ],
+      "tools": [
+        "file-manager"
+      ],
+      "status": "idle",
+      "created_at": "2026-04-19T03:07:33+00:00",
+      "created_by": "user"
+    },
+    {
+      "id": "review-integrator",
+      "name": "리뷰 통합자",
+      "role": "3가지 관점의 리뷰 결과를 종합하여 최종 코드 리뷰 리포트를 마크다운 형식으로 작성합니다.",
+      "system_prompt_path": ".agents/review-integrator/SYSTEM_PROMPT.md",
+      "skills": [],
+      "tools": [
+        "file-manager"
+      ],
+      "status": "idle",
+      "created_at": "2026-04-19T03:07:33+00:00",
+      "created_by": "user"
+    }
+  ]
+}

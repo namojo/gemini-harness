@@ -437,20 +437,55 @@ def run_harness(
                 errors.append(f"{type(exc).__name__}: {exc}")
 
     wall = int((time.monotonic() - start) * 1000)
+    final_registry = final_state.get("registry", [])
+    history = final_state.get("history") or []
+
+    # Build an agent_timeline field that Gemini CLI can consume via write_todos.
+    # Each agent gets a status: completed (at least one worker_complete), blocked
+    # (errors tagged with this agent), or idle (no events seen).
+    worker_completes = {
+        e.get("agent")
+        for e in history
+        if isinstance(e, dict) and e.get("kind") == "worker_complete"
+    }
+    blocked_agents: set[str] = set()
+    for err in errors:
+        if isinstance(err, str):
+            continue
+        owner = (err.get("agent") if isinstance(err, dict) else None) if err else None
+        if owner:
+            blocked_agents.add(owner)
+
+    agent_timeline = []
+    for agent in final_registry:
+        aid = agent.get("id", "")
+        if aid in blocked_agents:
+            status = "blocked"
+        elif aid in worker_completes:
+            status = "completed"
+        else:
+            status = "idle"
+        agent_timeline.append(
+            {
+                "id": aid,
+                "role": (agent.get("role") or "")[:80],
+                "status": status,
+            }
+        )
+
     summary = {
         "run_id": run_id,
         "project_path": str(root),
         "steps": chunks_seen,
         "wall_clock_ms": wall,
         "errors": errors,
-        "final_registry": final_state.get("registry", []),
+        "final_registry": final_registry,
+        "agent_timeline": agent_timeline,  # HUD-friendly snapshot
         "artifacts": list((final_state.get("artifacts") or {}).keys()),
-        "history_tail": (final_state.get("history") or [])[-10:],
+        "history_tail": history[-10:],
         "checkpoint_path": str(checkpoint_path.resolve()),
         "context_md_path": str((root / ".gemini" / "context.md").resolve()),
     }
-    if errors:
-        return summary
     return summary
 
 

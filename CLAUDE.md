@@ -57,3 +57,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 | 2026-04-19 | Gemini CLI 익스텐션 매니페스트를 실제 스펙으로 교체 | `gemini-extension.json`(신규, project root) · `GEMINI.md`(컨텍스트·트리거 발화 매핑) · `extension/manifest.json`(제거) · `pyproject.toml`(force-include + sdist 경로 수정, 근거 없는 `gemini.extensions` entry-point 제거) · `runtime/_verify.py`·`tests/unit/test_verify.py`(trigger check 재작성) | 기존 매니페스트는 가정 기반 추측이었음. context7로 실제 Gemini CLI v0.36+ 스키마(`mcpServers`, `contextFileName`) 확인 후 올바른 포맷으로 재작성. 트리거는 locale 배열이 아니라 GEMINI.md 프로즈 기반 — 검증기도 이 방식으로 변경. `gemini extensions install .` 명령이 정상 작동 |
 | 2026-04-19 | 커스텀 슬래시 명령 5개 추가 | `commands/harness/{build,audit,verify,evolve,run}.toml` · `pyproject.toml`(sdist include) | Gemini CLI는 skill 개념이 없어 자연어 트리거(GEMINI.md) + 커스텀 명령(TOML) 두 경로가 표준. 각 명령은 `{{args}}`로 사용자 입력을 받아 해당 MCP 도구(`mcp_harness_harness_*`) 호출 지시 프롬프트로 렌더. `/harness:build "도메인"` 같은 명시적 호출 가능. 설치 후 `/commands reload`로 즉시 활성화 |
 | 2026-04-19 | MCP 서버 기동 명령을 `python3 -m`으로 변경 | `gemini-extension.json`(command/args 수정) · `README.md`(트러블슈팅 안내) | `pip install -e .`이 스크립트를 `~/Library/Python/3.12/bin/`에 설치하는데 이 경로가 PATH에 없어 `gemini-harness-mcp`로는 disconnected 발생. `python3 -m gemini_harness.mcp_server`는 Python이 PATH에 있고 패키지가 site-packages에 있으면 항상 작동 — 이식성 개선. 수동 `gemini mcp add`는 중복이므로 `gemini mcp remove gemini-harness`로 정리 권장 |
+
+## 하네스: generated-build-20260419T030644Z
+
+**패턴:** fan_out_fan_in
+
+**트리거:** 이 도메인 관련 작업을 요청하면 Gemini-Harness의 `harness.run` MCP 도구 또는 `gemini-harness run --project {project_path} --user-input "..."` 명령으로 실행하라.
+
+**변경 이력:**
+| 날짜 | 변경 내용 | 대상 | 사유 |
+|------|----------|------|------|
+| 2026-04-19 | 초기 생성 | 전체 | harness.build (run_id=build-20260419T030644Z) |

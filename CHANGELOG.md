@@ -38,6 +38,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 5 regression tests in `tests/unit/test_create_agent_loop_guard.py`
   covering missing-body rejection, error feedback in prompts, and the
   three loop-guard scenarios (abort / streak reset / different agents).
+- `harness.run` response now includes an `agent_timeline: [{id, role, status}]`
+  field where `status ∈ {idle, completed, blocked}`. This is the shape the
+  Gemini CLI LLM is instructed to convert into `write_todos` calls.
+
+### Changed
+- **HUD strategy corrected.** In v0.1.1 we claimed MCP progress notifications
+  would show active agents in Gemini CLI's HUD. In practice Gemini CLI
+  does not render stdio MCP `notifications/progress` — the notifications
+  were silently dropped. v0.1.2 switches to the supported path:
+  1. The `/harness:run` slash command now instructs Gemini's LLM to call
+     `write_todos` (Gemini CLI's native task-list tool that renders above
+     the input prompt) both before and after `harness.run`.
+  2. `harness.run` returns `agent_timeline` so the LLM can populate the
+     todos deterministically from the response.
+  3. The MCP progress notification path is kept (protocol-correct, useful
+     for other MCP clients like MCP Inspector) but documented as passive
+     for Gemini CLI.
+  4. The accompanying `_call_runtime` change (sync runtime fns offloaded
+     to `asyncio.to_thread`) remains unconditionally useful — it keeps
+     the MCP event loop responsive during long harness runs regardless
+     of HUD rendering.
 
 ## [0.1.1] - 2026-04-19
 

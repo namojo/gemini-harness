@@ -4,7 +4,7 @@
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)
-[![Tests](https://img.shields.io/badge/tests-193%20passed-brightgreen.svg)](#development)
+[![Tests](https://img.shields.io/badge/tests-215%20passed-brightgreen.svg)](#development)
 [![Port of](https://img.shields.io/badge/port_of-revfactory%2Fharness%20v1.2.0-orange.svg)](https://github.com/revfactory/harness)
 
 ---
@@ -204,6 +204,75 @@ your-project/
 
 ## Architecture
 
+우리가 실제로 만든 것은 **두 레이어의 명확한 분리**입니다. "MCP 서버냐 LangGraph냐"는 선택이 아니라 **층위 관계**:
+
+```
+┌── Gemini CLI (오케스트레이터) ─────────────────────────┐
+│                                                         │
+│  사용자 발화 ─── JSON-RPC stdio ──→ 우리 MCP 서버       │
+│                                                         │
+│  ┌── 우리 MCP 서버 (transport 레이어) ────────────────┐ │
+│  │                                                     │ │
+│  │  5 tools 노출:                                      │ │
+│  │    audit  →  순수 Python 파일 스캔                  │ │
+│  │    verify →  스키마·트리거·드라이런 검증           │ │
+│  │    build  →  Gemini 1회 호출 (meta-architect)      │ │
+│  │    evolve →  Gemini 1회 호출 (feedback → diff)     │ │
+│  │    run    ──────────────→ ★ LangGraph 런타임       │ │
+│  │                                                     │ │
+│  └─────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────┘
+                                │
+                                ▼
+           ┌─ LangGraph StateGraph (execution 레이어) ─┐
+           │                                             │
+           │   START → manager ↔ worker ↔ tool_executor │
+           │                                             │
+           │   • Manager+Worker+Registry (Swarm-style)  │
+           │   • 6 패턴 라우팅 + 복합 패턴              │
+           │   • Sqlite 체크포인터 (동기/비동기 2경로)  │
+           │   • Send 병렬 fan-out (실측 wall-clock 병렬) │
+           │                                             │
+           └─────────────────────────────────────────────┘
+                                │
+                                ▼
+              도구 호출 우선순위 (재사용 > 재구현)
+              ① Gemini CLI 네이티브 (pre-collection)
+              ② 사용자 MCP 서버 proxy (tool_discovery)
+              ③ 샌드박스 Python 내장 (last-resort)
+              ④ 메타 에이전트가 새 에이전트 생성
+
+                Architecture layers at a glance
+```
+
+**레이어별 역할과 위치:**
+
+| 레이어 | 역할 | 구현 파일 |
+|-------|------|---------|
+| **MCP 서버** | Gemini CLI와의 JSON-RPC 통신, 5 tool 노출, progress notification | `src/gemini_harness/mcp_server.py` |
+| **Entrypoints** | 각 tool → 내부 Python 함수 디스패치, non-blocking wrapper (`asyncio.to_thread`) | `runtime/harness_runtime.py`, `runtime/_audit.py`, `_verify.py`, `_build.py`, `_evolve.py`, `_run.py` |
+| **LangGraph 그래프** | **`harness.run`이 호출될 때만** 가동 — workflow.json을 StateGraph로 컴파일하여 멀티-에이전트 실행 | `runtime/_run.py`, `manager.py`, `worker.py`, `tool_executor.py`, `patterns/*.py`, `compat.py` |
+| **Gemini API** | Worker 노드 내부에서 에이전트별 호출, function-calling 지원 | `integrations/gemini_client.py` |
+| **체크포인트** | 중단·재개용 SQLite 지속화 — 동기/비동기 두 경로 | `langgraph-checkpoint-sqlite` (외부) + `compat.py` 어댑터 |
+| **도구 발견·proxy** | 사용자 MCP 서버 (`~/.gemini/settings.json`) 자동 발견, `mcp_adapter`로 proxy | `runtime/tool_discovery.py`, `integrations/mcp_adapter.py` |
+| **내장 fallback** | 파일 작업용 샌드박스 Python 헬퍼 (last-resort) | `runtime/builtin_tools.py` |
+
+### 우리가 제대로 풀어낸 것
+
+1. **원본 6 아키텍처 패턴 무손실 포팅** — Claude Code의 `TeamCreate`/`SendMessage`/`TaskCreate`를 LangGraph State reducer + `Send`/`Command`로 1:1 매핑. 5개 동등성 시나리오 모두 정적 검증 완료.
+
+2. **Manager + Worker + Registry (Swarm-style)** — 정적 그래프(3 노드) 위에서 State의 `registry` 필드로 에이전트를 동적 표현. **메타 에이전트가 런타임에 새 에이전트를 만들어도 그래프 재컴파일 불필요.**
+
+3. **실제 wall-clock 병렬 실행** — sync worker + `.stream()` 조합의 직렬 실행 버그를 발견·수정하여 `AsyncSqliteSaver` + `.astream()` + `asyncio.to_thread`로 전환. 4 workers × 1s 테스트가 3.24s에 완료되어 **물리적 병렬**을 증명.
+
+4. **루프 방어 메커니즘** — 메타 에이전트가 malformed SYSTEM_PROMPT를 반복 생산하는 무한 retry 버그를 해결. Worker가 실패 이유를 다음 프롬프트에 surface하고, Manager는 3회 연속 실패 시 `create_agent_loop_aborted`로 강제 종료.
+
+5. **도구 재사용 우선 철학** — Gemini CLI 내장/사용자 MCP 서버를 **재구현 없이 재사용**. 슬래시 명령이 pre-collection을 유도하고, Worker가 `~/.gemini/settings.json`을 자동 발견하여 사용자의 기존 MCP를 proxy. 내장 Python 헬퍼는 마지막 수단.
+
+6. **LangGraph 버전 격리** — 모든 `langgraph` import를 `runtime/compat.py` 한 곳에만 두어, LangGraph 업데이트 시 단일 파일만 조정.
+
+7. **TestPyPI 배포 + Gemini CLI 익스텐션 설치 가능** — `pip install gemini-harness` + `gemini extensions install .` 두 명령으로 재현 가능한 전체 파이프라인.
+
 ### Runtime: Manager + Worker + Registry
 
 LangGraph StateGraph는 **고정 3노드**입니다:
@@ -285,7 +354,7 @@ LangGraph의 모든 import는 `src/gemini_harness/runtime/compat.py` **한 곳**
 
 ```bash
 pip install -e '.[dev]'
-pytest                              # 전체 (193 tests)
+pytest                              # 전체 (215 tests)
 pytest tests/unit/test_build.py     # 특정 파일
 pytest -k fan_out_fan_in            # 패턴 매칭
 ```
@@ -295,7 +364,7 @@ pytest -k fan_out_fan_in            # 패턴 매칭
 실제 API를 호출하여 build → run 전체 흐름 검증:
 
 ```bash
-python3 tests/_smoke_live_full.py
+python3 scripts/smoke/live_full.py
 # 기대 출력: "success in <seconds>" + artifacts 파일 경로
 ```
 
@@ -351,10 +420,18 @@ gemini extensions install /path/to/gemini-harness
 
 ## Acknowledgments
 
-- 원본 [revfactory/harness](https://github.com/revfactory/harness) v1.2.0 — 아키텍처·워크플로우·6 패턴 설계의 원천
-- [LangGraph](https://langchain-ai.github.io/langgraph/) — StateGraph·체크포인터 런타임
-- [Google Gemini](https://ai.google.dev/) — 추론 엔진 (gemini-3.1-pro-preview)
-- [Model Context Protocol](https://modelcontextprotocol.io/) — Gemini CLI 통합 프로토콜
+### 🙇 Special thanks — **황민호 (Minho Hwang)**
+
+이 프로젝트는 [**황민호님(@revfactory)**](https://github.com/revfactory)이 설계·공개한 [`revfactory/harness`](https://github.com/revfactory/harness) v1.2.0를 원본으로 하는 포트입니다. 6개 아키텍처 패턴의 체계, Phase 0~7 워크플로우, 메타 에이전트가 에이전트를 낳는 사고방식, 그리고 변경 이력을 통한 하네스 진화 철학까지 — 이 포트의 뼈대 **전부가 그의 원작에서 나왔습니다**. 멋진 하네스를 오픈소스로 공개해 주셔서 진심으로 감사드립니다.
+
+> *"The best way to honor a great abstraction is to port it and see it hold up."* — 이 포트는 원본이 충분히 좋은 추상화였음을 LangGraph + Gemini 스택에서 재현하여 증명한 사례입니다.
+
+### 기반 기술 스택
+
+- **[LangGraph](https://langchain-ai.github.io/langgraph/)** — StateGraph·체크포인터·Send/Command 런타임. Manager+Worker+Registry를 실현해 준 엔진.
+- **[Google Gemini](https://ai.google.dev/)** — meta-architect와 worker를 구동하는 추론 엔진 (기본: `gemini-3.1-pro-preview`).
+- **[Model Context Protocol](https://modelcontextprotocol.io/)** — Gemini CLI와의 stdio 통신 표준.
+- **[Gemini CLI](https://github.com/google-gemini/gemini-cli)** — transport 레이어이자 슬래시 명령·`write_todos` HUD의 호스트.
 
 ## License
 

@@ -15,8 +15,8 @@ from pathlib import Path
 def main() -> int:
     from dotenv import load_dotenv
 
-    load_dotenv(Path(__file__).parent.parent / ".env")
-    sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
+    load_dotenv(Path(__file__).parent.parent.parent / ".env")
+    sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
 
     from gemini_harness.runtime.harness_runtime import (
         BuildError,

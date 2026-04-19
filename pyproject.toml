@@ -72,6 +72,7 @@ include = [
   "gemini-extension.json",
   "GEMINI.md",
   "commands",
+  "scripts/smoke",
   "README.md",
   "CHANGELOG.md",
   "LICENSE",

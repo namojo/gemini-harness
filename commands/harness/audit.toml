@@ -1,0 +1,18 @@
+description = "현재 프로젝트의 하네스 상태를 감사합니다. workflow.json, `.agents/`, `.gemini/context.md`를 스캔하여 drift를 리포트."
+
+prompt = """
+현재 프로젝트 디렉토리에 대해 `mcp_harness_harness_audit` MCP 도구를 호출하세요. 파라미터:
+
+- `project_path`: 현재 작업 디렉토리 절대 경로
+- `include_skills`: true (기본)
+- `include_history`: {{args}}이 "history" 또는 "with-history"를 포함하면 true, 그 외 false
+
+호출 후 응답의 다음을 요약:
+- `has_harness`: 하네스 존재 여부
+- `pattern`, `workflow_version`: 현재 패턴과 스키마 버전
+- `registry_snapshot`: 등록된 에이전트 수와 id 목록
+- `drift`: 각 항목을 `kind`(missing_prompt_file / orphan_prompt_file / schema_violation 등)별로 집계하여 보고
+- `history_digest`: include_history=true인 경우에만, 최근 이벤트 kind별 카운트
+
+drift가 발견되면 `/harness:evolve` 사용을 제안하세요.
+"""

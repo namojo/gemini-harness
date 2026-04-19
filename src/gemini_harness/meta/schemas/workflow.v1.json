@@ -1,0 +1,202 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://gemini-harness.local/schema/workflow.v1.json",
+  "title": "GeminiHarnessWorkflow",
+  "description": "workflow.json v1 — Manager+Worker+Registry 아키텍처의 초기 registry 스냅샷 + 패턴 메타. 그래프 정의가 아니라 시작 상태 스냅샷이다. 런타임 중 추가되는 에이전트는 .gemini/context.md 이벤트 로그로 기록한다.",
+  "type": "object",
+  "required": ["version", "pattern", "initial_registry"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "const": "1.0",
+      "description": "스키마 버전. v2 bump는 필드 삭제·의미 변경 시에만."
+    },
+    "pattern": {
+      "description": "Manager 라우팅 선택자. 6 기본 패턴 또는 '+'로 연결된 복합 패턴 문자열(예: 'fan_out_fan_in+producer_reviewer'). anyOf를 쓰는 이유: 단일 패턴 문자열이 두 분기에 모두 매칭되는 edge case는 없지만(composite regex는 최소 1개의 '+' 그룹 필수), 검증기 구현 호환성을 위해 anyOf로 고정.",
+      "anyOf": [
+        {
+          "enum": [
+            "pipeline",
+            "fan_out_fan_in",
+            "expert_pool",
+            "producer_reviewer",
+            "supervisor",
+            "hierarchical"
+          ]
+        },
+        {
+          "type": "string",
+          "pattern": "^(pipeline|fan_out_fan_in|expert_pool|producer_reviewer|supervisor|hierarchical)(\\+(pipeline|fan_out_fan_in|expert_pool|producer_reviewer|supervisor|hierarchical))+$"
+        }
+      ]
+    },
+    "initial_registry": {
+      "type": "array",
+      "minItems": 1,
+      "description": "시작 시점의 에이전트 목록. 런타임에 추가되는 에이전트는 여기에 들어가지 않는다.",
+      "items": { "$ref": "#/$defs/AgentMetadata" }
+    },
+    "routing_config": {
+      "type": "object",
+      "description": "패턴별 추가 설정. ADR 0003의 계약을 따른다. fan_out_fan_in → integrator_id 필수. expert_pool → classifier 필수. producer_reviewer → producer_id, reviewer_id 필수. supervisor → supervisor_id 필수. hierarchical → root_id 필수, max_depth 선택(기본 2). 복합 패턴 → phase_map 필수.",
+      "additionalProperties": true,
+      "properties": {
+        "producer_id": {
+          "type": "string",
+          "description": "producer_reviewer: 초안 생성 에이전트 id."
+        },
+        "reviewer_id": {
+          "type": "string",
+          "description": "producer_reviewer: 검토 에이전트 id."
+        },
+        "supervisor_id": {
+          "type": "string",
+          "description": "supervisor: 중앙 감독 에이전트 id."
+        },
+        "integrator_id": {
+          "type": "string",
+          "description": "fan_out_fan_in: 분기 결과를 통합하는 에이전트 id."
+        },
+        "root_id": {
+          "type": "string",
+          "description": "hierarchical: 최상위 에이전트 id."
+        },
+        "max_depth": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 2,
+          "description": "hierarchical: 위임 깊이 상한. 원본 권장 2."
+        },
+        "classifier": {
+          "description": "expert_pool: 라우팅 분류기. LLM 프롬프트 문자열 또는 키워드 맵(키워드 → expert id).",
+          "oneOf": [
+            { "type": "string" },
+            {
+              "type": "object",
+              "additionalProperties": { "type": "string" }
+            }
+          ]
+        },
+        "phase_map": {
+          "type": "object",
+          "description": "복합 패턴 전용. phase 이름 → sub-pattern 이름. 예: {'collect': 'fan_out_fan_in', 'review': 'producer_reviewer'}.",
+          "additionalProperties": {
+            "enum": [
+              "pipeline",
+              "fan_out_fan_in",
+              "expert_pool",
+              "producer_reviewer",
+              "supervisor",
+              "hierarchical"
+            ]
+          }
+        },
+        "retry_limit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "패턴별 retry 오버라이드. 있으면 최상위 retry_limit을 override. 없으면 최상위 값 사용. 주로 producer_reviewer에서 유용. v1은 복합 패턴 내 phase별 세분화 미지원(v2 후보)."
+        },
+        "tool_executor": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Tool execution config. Optional. Omit to disable tool-calling for this workflow. Worker가 Gemini 응답에서 tool_calls를 받으면 이 블록 설정으로 실행. State 필드 pending_tool_calls / tool_results / tool_iterations과 연동.",
+          "properties": {
+            "max_tool_iterations": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 20,
+              "default": 5,
+              "description": "한 Worker 호출 사이클당 최대 tool 호출 반복 횟수. 무한 루프 방지."
+            },
+            "allowed_tools": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "이 워크플로우에서 호출 가능한 tool 이름 화이트리스트. 비어 있으면 AgentMetadata.tools를 그대로 사용."
+            },
+            "tool_timeout_s": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 300,
+              "default": 30,
+              "description": "단일 tool 호출 타임아웃(초)."
+            }
+          }
+        }
+      }
+    },
+    "retry_limit": {
+      "type": "integer",
+      "default": 3,
+      "minimum": 0,
+      "maximum": 10,
+      "description": "producer_reviewer 재시도 상한. 초과 시 Manager가 escalate."
+    }
+  },
+  "$defs": {
+    "AgentMetadata": {
+      "type": "object",
+      "required": ["id", "name", "role", "system_prompt_path"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_-]*$",
+          "minLength": 2,
+          "maxLength": 64,
+          "description": "slug. registry 내 유일해야 한다."
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "사람이 읽는 이름. 보통 id와 동일."
+        },
+        "role": {
+          "type": "string",
+          "minLength": 10,
+          "description": "1~3문장 역할 설명. 10자 미만이면 린터 실패."
+        },
+        "system_prompt_path": {
+          "type": "string",
+          "pattern": "^\\.agents/[a-z0-9_-]+/SYSTEM_PROMPT\\.md$",
+          "description": ".agents/{name}/SYSTEM_PROMPT.md 경로. 파일이 실존해야 한다."
+        },
+        "skills": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": ".agents/skills/ 하위 스킬 이름 목록.",
+          "default": []
+        },
+        "tools": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Gemini CLI 익스텐션 이름. file-manager, google-search, mcp:{name} 등.",
+          "default": []
+        },
+        "group": {
+          "type": "string",
+          "description": "팀/그룹 태그. hierarchical 패턴에서 하위 팀 식별에 사용."
+        },
+        "status": {
+          "enum": ["idle", "working", "completed", "failed"],
+          "default": "idle"
+        },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "created_by": {
+          "type": "string",
+          "description": "'user' 또는 메타 에이전트 id."
+        },
+        "temperature": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 2,
+          "description": "Gemini sampling temperature (선택). 에이전트별 샘플링 편차 필요 시 지정."
+        }
+      }
+    }
+  }
+}

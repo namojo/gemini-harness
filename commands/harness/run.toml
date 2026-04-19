@@ -1,0 +1,22 @@
+description = "생성된 하네스를 실제로 실행. 사용: /harness:run \"실행할 작업 지시\""
+
+prompt = """
+실행 요청: {{args}}
+
+현재 프로젝트의 workflow.json을 기반으로 `mcp_harness_harness_run` MCP 도구를 호출하세요. 파라미터:
+
+- `project_path`: 현재 작업 디렉토리 절대 경로
+- `user_input`: "{{args}}" — 비어있으면 사용자에게 무엇을 실행할지 물어보기
+- `step_limit`: 기본 50. 사용자가 "간단히" 언급하면 15로 제한
+
+실행은 실제 Gemini API를 호출하고 시간이 걸릴 수 있음을 사용자에게 안내하세요 (일반적으로 1~3분).
+
+응답의 다음을 요약:
+- `steps`: 실행된 Manager↔Worker 사이클 수
+- `errors`: 비어있어야 정상
+- `artifacts`: 생성된 파일 경로 목록
+- `final_registry`: 실행 후 에이전트 상태
+- `context_md_path`: `.gemini/context.md` 경로 (실시간 로그)
+
+artifacts 중 주요 파일은 Read 도구로 읽어 사용자에게 핵심 내용을 보여주세요.
+"""

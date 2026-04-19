@@ -1,0 +1,14 @@
+description = "피드백 기반으로 하네스를 점진적 수정합니다. 사용: /harness:evolve \"편집자가 너무 관대함. 더 엄격하게\""
+
+prompt = """
+사용자 피드백: {{args}}
+
+현재 프로젝트에 대해 `mcp_harness_harness_evolve` MCP 도구를 호출하세요. 파라미터:
+
+- `project_path`: 현재 작업 디렉토리 절대 경로
+- `feedback`: "{{args}}" — 10자 이상 필수. 짧으면 더 구체적으로 물어보기
+- `dry_run`: 사용자 발화에 "dry run", "시뮬레이션", "먼저 보여" 등이 포함되면 true, 그 외 false
+- `scope`: 피드백이 특정 에이전트/스킬을 명시하면 `[{"kind": "agent", "id": "<id>"}]` 형태로. 명시 없으면 생략
+
+응답의 `applied`, `changes`(각 변경의 `operation`과 `path` + 간단한 diff 요약), `summary`를 보고하세요. dry_run=true면 "적용 전 확인입니다. 이대로 적용할까요?"라고 사용자 승인 요청.
+"""

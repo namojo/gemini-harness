@@ -1,0 +1,102 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gemini-harness"
+version = "0.1.0"
+description = "Port of revfactory/harness to Gemini CLI + LangGraph. Generates team-of-agents architectures for any project."
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.11"
+authors = [
+  { name = "gemini-harness contributors" },
+]
+keywords = ["gemini", "langgraph", "mcp", "agents", "harness", "orchestration"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: Apache Software License",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Code Generators",
+]
+
+# LangGraph pin — per ADR 0005 (major-only pin, minors allowed).
+# Latest stable confirmed via context7 MCP (/langchain-ai/langgraph v1.0.8).
+dependencies = [
+  "langgraph>=1.0,<2.0",
+  "langgraph-checkpoint-sqlite>=2.0,<4.0",
+  "google-genai>=1.33,<2.0",
+  "mcp>=1.12,<2.0",
+  "tenacity>=9.0,<10.0",
+  "pydantic>=2.6,<3.0",
+  "pyyaml>=6.0,<7.0",
+  "packaging>=24.0",
+  "jsonschema>=4.21,<5.0",
+  "python-dotenv>=1.0,<2.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pytest-asyncio>=0.23",
+  "mypy>=1.8",
+  "ruff>=0.4",
+  "hatch>=1.12",
+]
+# Version matrix targets for compat CI. Concrete pins are filled in per release.
+compat-prev = ["langgraph>=0.6,<1.0"]
+compat-next = ["langgraph>=1.1,<2.0"]
+
+[project.urls]
+Homepage = "https://github.com/namojo/gemini-harness"
+Issues = "https://github.com/namojo/gemini-harness/issues"
+
+[project.scripts]
+gemini-harness = "gemini_harness.cli:main"
+gemini-harness-mcp = "gemini_harness.mcp_server:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gemini_harness"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"gemini-extension.json" = "gemini_harness/assets/gemini-extension.json"
+"GEMINI.md" = "gemini_harness/assets/GEMINI.md"
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "src/gemini_harness",
+  "gemini-extension.json",
+  "GEMINI.md",
+  "commands",
+  "README.md",
+  "CHANGELOG.md",
+  "LICENSE",
+  "pyproject.toml",
+]
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "-ra --strict-markers"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "S", "N", "SIM"]
+ignore = ["S101"]  # allow `assert` in tests
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*" = ["S"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+ignore_missing_imports = true

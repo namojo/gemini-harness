@@ -1,0 +1,34 @@
+{
+  "_lint_comment": "BAD. 실패하는 체크: (1) workflow.routing_config_complete: pattern='producer_reviewer'인데 routing_config.producer_id 누락. (2) workflow.unique_ids: 'writer' id가 중복 등장. (3) agent.id_pattern: 'Writer-2'가 대문자로 시작하여 ^[a-z]... 패턴 위반. (4) agent.role_not_empty: 두 번째 항목의 role이 5자로 minLength=10 미달. (5) workflow.system_prompts_exist: 'reviewer' 항목의 system_prompt_path가 registry에 writer/editor만 있는데 reviewer 경로를 가리켜 dangling reference. 왜 나쁜가: 'disconnected'는 registry와 routing_config이 서로 다른 id 세트를 참조하여 Manager가 라우팅 실행 시점에 KeyError로 크래시한다는 의미.",
+  "version": "1.0",
+  "pattern": "producer_reviewer",
+  "routing_config": {
+    "reviewer_id": "editor"
+  },
+  "initial_registry": [
+    {
+      "id": "writer",
+      "name": "writer",
+      "role": "생산자.",
+      "system_prompt_path": ".agents/writer/SYSTEM_PROMPT.md"
+    },
+    {
+      "id": "writer",
+      "name": "writer-dup",
+      "role": "중복 id.",
+      "system_prompt_path": ".agents/writer/SYSTEM_PROMPT.md"
+    },
+    {
+      "id": "Writer-2",
+      "name": "Writer-2",
+      "role": "대문자로 시작하여 id 패턴 위반.",
+      "system_prompt_path": ".agents/Writer-2/SYSTEM_PROMPT.md"
+    },
+    {
+      "id": "reviewer",
+      "name": "reviewer",
+      "role": "짧음",
+      "system_prompt_path": ".agents/reviewer/SYSTEM_PROMPT.md"
+    }
+  ]
+}

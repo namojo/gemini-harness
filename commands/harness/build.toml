@@ -1,0 +1,17 @@
+description = "새 하네스를 생성합니다. 도메인 한 문장 → 6 패턴 중 선택 → 에이전트 팀과 스킬을 `.agents/`에 작성. 사용: /harness:build \"도메인 설명\""
+
+prompt = """
+사용자 요청: {{args}}
+
+현재 프로젝트 디렉토리(`pwd`)에 대해 `mcp_harness_harness_build` MCP 도구를 호출하세요. 파라미터:
+
+- `project_path`: 현재 작업 디렉토리의 **절대 경로**
+- `domain_description`: "{{args}}" — 20자 이상이어야 함. 짧으면 사용자에게 더 구체적인 설명 요청
+- `max_agents`: 기본 8 (사용자가 별도 지정하지 않으면 생략 가능)
+- `force`: 기존 하네스를 덮어쓸지 여부. 기본 false — 기존 `workflow.json`이 있으면 사용자에게 `force=true`로 재실행할지 확인
+
+호출 후 응답의 `pattern`, `final_registry`, `written_files`, `metrics`를 요약해 사용자에게 보고하세요. 예:
+> `fan_out_fan_in` 패턴 선택됨. 5 에이전트 생성: frontend-architect, backend-architect, ...  총 12개 파일 작성 (43.8s / 1045 입력·2963 출력 토큰).
+
+이후 "이 하네스를 실행해볼까요?"라고 `/harness:run` 사용을 제안하세요.
+"""

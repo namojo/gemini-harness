@@ -1,0 +1,12 @@
+description = "하네스 구조·트리거·드라이런을 검증합니다. QA 리포트를 `_workspace/qa/`에 생성."
+
+prompt = """
+현재 프로젝트에 대해 `mcp_harness_harness_verify` MCP 도구를 호출하세요. 파라미터:
+
+- `project_path`: 현재 작업 디렉토리 절대 경로
+- `checks`: 기본 `["schema", "triggers", "dry_run"]`. 사용자 입력 "{{args}}"이 특정 체크 이름을 포함하면 그것만 사용
+- `dry_run_input`: "{{args}}"에서 드라이런 입력을 추출. 비어있거나 check 이름뿐이면 예시 문장 사용 ("복잡한 Next.js 프로젝트 아키텍처를 짜줘")
+- `ab_baseline_run_id`: 비워둠 (self_critique_ab는 현재 환경 의존)
+
+응답의 `passed`, `results`(각 check의 pass/fail + detail), `summary_path`를 요약해 보고하세요. 실패한 check가 있으면 사유와 `report_path`를 함께 안내.
+"""

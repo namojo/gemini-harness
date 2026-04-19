@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+.eggs/
+MANIFEST
+
+# Distribution / packaging
+build/
+dist/
+wheels/
+*.whl
+*.tar.gz
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Testing / coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+coverage.xml
+htmlcov/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets / env
+.env
+.env.local
+.env.*.local
+*.key
+*.pem
+
+# Runtime / generated harness artifacts
+_workspace/checkpoints/
+_workspace/runs/
+_workspace_prev*/
+.gemini/context.md
+
+# Smoke test temp
+tests/*.output
+
+# Safety: unrelated sibling projects that may accidentally land in the repo root
+saju-vision/
+**/saju-vision/
+
+# Runtime QA reports (time-bound, regenerated on every harness.verify)
+_workspace/qa/
+_workspace/metrics/
+_workspace/runs/
+_workspace/*_prev*/

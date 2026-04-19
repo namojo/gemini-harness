@@ -1,0 +1,7 @@
+{
+  "version": "1.0",
+  "pattern": "${pattern}",
+  "retry_limit": ${retry_limit},
+  "routing_config": ${routing_config_json},
+  "initial_registry": ${initial_registry_json}
+}

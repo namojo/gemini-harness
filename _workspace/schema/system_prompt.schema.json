@@ -1,0 +1,55 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://gemini-harness.local/schema/system_prompt.schema.json",
+  "title": "GeminiHarnessSystemPromptFrontmatter",
+  "description": "SYSTEM_PROMPT.md의 YAML frontmatter 스키마. 본문 섹션(## 핵심 역할, ## 자가 검증 등)은 이 스키마로 검증하지 않고 meta_linter.py의 body check가 담당한다. frontmatter는 기계적 형식, body는 구조 패턴 매칭이므로 검증 레이어를 분리한다.",
+  "type": "object",
+  "required": ["name", "version", "model", "tools"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_-]*$",
+      "minLength": 2,
+      "maxLength": 64,
+      "description": "에이전트 slug. registry의 id와 일치해야 한다."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$",
+      "description": "semver. 'major.minor' 또는 'major.minor.patch'. 초기 생성물은 '1.0'."
+    },
+    "model": {
+      "type": "string",
+      "pattern": "^gemini-",
+      "description": "Gemini 모델 ID. 포트 기본값: gemini-3.1-pro-preview. 타 provider 금지 (원본 하네스는 opus였으나 포트는 Gemini로 고정)."
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "pattern": "^([a-z][a-z0-9-]*|mcp:[a-z][a-z0-9-]*)$"
+      },
+      "description": "Gemini CLI 익스텐션 이름 목록. 예: file-manager, google-search, mcp:harness. 허용 리스트는 런타임 측에서 별도 검증.",
+      "default": []
+    },
+    "group": {
+      "type": "string",
+      "description": "팀 태그 (선택)."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "created_by": {
+      "type": "string",
+      "description": "'user' 또는 메타 에이전트 id."
+    },
+    "temperature": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2,
+      "description": "Gemini sampling temperature (선택). AgentMetadata.temperature와 쌍으로 유지."
+    }
+  }
+}

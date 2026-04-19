@@ -1,0 +1,36 @@
+{
+  "_lint_comment": "GOOD. 통과: workflow.version_present, workflow.pattern_valid (producer_reviewer), workflow.unique_ids, workflow.routing_config_complete (producer_id + reviewer_id 존재), workflow.system_prompts_exist (경로 패턴 매칭). 왜 좋은가: producer_reviewer 패턴은 routing_config.producer_id/reviewer_id가 필수인데 둘 다 제공됨. initial_registry의 모든 id가 유일하고 system_prompt_path가 .agents/{name}/SYSTEM_PROMPT.md 규약 준수.",
+  "version": "1.0",
+  "pattern": "producer_reviewer",
+  "retry_limit": 3,
+  "routing_config": {
+    "producer_id": "writer",
+    "reviewer_id": "editor"
+  },
+  "initial_registry": [
+    {
+      "id": "writer",
+      "name": "writer",
+      "role": "주어진 주제로 초안을 작성하는 생산자. 검토자의 피드백을 반영하여 재작성한다.",
+      "system_prompt_path": ".agents/writer/SYSTEM_PROMPT.md",
+      "skills": ["content-writing"],
+      "tools": ["file-manager"],
+      "group": "production",
+      "status": "idle",
+      "created_at": "2026-04-19T02:00:00Z",
+      "created_by": "user"
+    },
+    {
+      "id": "editor",
+      "name": "editor",
+      "role": "초안의 사실·논리·톤을 검토하여 pass 또는 수정 요청을 반환한다.",
+      "system_prompt_path": ".agents/editor/SYSTEM_PROMPT.md",
+      "skills": ["content-review"],
+      "tools": ["file-manager"],
+      "group": "production",
+      "status": "idle",
+      "created_at": "2026-04-19T02:00:00Z",
+      "created_by": "user"
+    }
+  ]
+}

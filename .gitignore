@@ -64,3 +64,19 @@ _workspace/qa/
 _workspace/metrics/
 _workspace/runs/
 _workspace/*_prev*/
+
+# User-generated harness artifacts (if user runs harness.build inside this repo
+# during testing, the generated team lands at repo root — keep it local only)
+/workflow.json
+/.agents/
+/.agents/skills/
+/_workspace/*-reviewer/
+/_workspace/*-architect/
+/_workspace/*-writer/
+/_workspace/*-editor/
+/_workspace/*-integrator/
+/_workspace/blog-*/
+/_workspace/code-*/
+/_workspace/*/out.txt
+/_workspace/*/guidelines.md
+/_workspace/*/*_report.md

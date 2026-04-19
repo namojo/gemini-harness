@@ -55,7 +55,7 @@ def test_mcp_server_not_configured(monkeypatch):
     )
     result = executor("mcp:missing/echo", {}, timeout_s=5)
     assert result.is_error is True
-    assert "not configured" in (result.text or "")
+    assert "not found" in (result.text or "") or "not configured" in (result.text or "")
 
 
 def test_mcp_malformed_tool_name(monkeypatch):

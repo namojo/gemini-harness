@@ -18,6 +18,7 @@ def _resolve_model() -> str:
 
 import json
 import os
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -129,10 +130,43 @@ def _make_tool_executor(te_cfg: dict, run_id: str):
 
     allowed: list[str] = list(te_cfg.get("allowed_tools") or [])
     default_timeout = float(te_cfg.get("tool_timeout_s", 30))
-    mcp_servers: dict[str, list[str]] = dict(te_cfg.get("mcp_servers") or {})
+    mcp_servers_cfg: dict[str, list[str]] = dict(te_cfg.get("mcp_servers") or {})
+    # Lazily-populated: user-discovered servers merged with explicit config.
+    # Config wins on collision so users can override with a custom command.
+    _discovered_servers: dict[str, list[str]] | None = None
+
+    from .builtin_tools import builtins_by_name
+
+    def _resolve_mcp_server(name: str) -> list[str] | None:
+        nonlocal _discovered_servers
+        if name in mcp_servers_cfg:
+            return mcp_servers_cfg[name]
+        if _discovered_servers is None:
+            try:
+                from .tool_discovery import discover_mcp_servers
+                _discovered_servers = {
+                    k: v.command for k, v in discover_mcp_servers(".").items()
+                }
+            except Exception:
+                _discovered_servers = {}
+        return _discovered_servers.get(name)
+
+    def _normalize_call_name(raw: str) -> str:
+        """Map Gemini-emitted function names back to transport-prefixed form.
+
+        Gemini SDK rejects ':' and '/' in function declarations, so Worker
+        exposes ``mcp:github/list_issues`` as ``mcp__github__list_issues``.
+        Accept both when dispatching.
+        """
+        if raw.startswith("mcp__"):
+            parts = raw.split("__", 2)
+            if len(parts) == 3:
+                return f"mcp:{parts[1]}/{parts[2]}"
+        return raw
 
     def _execute(call_name, call_args, *, timeout_s=None, node="tool_executor", run_id=run_id):
         timeout = float(timeout_s if timeout_s is not None else default_timeout)
+        call_name = _normalize_call_name(call_name)
         if allowed and call_name not in allowed:
             return ToolExecResult(
                 is_error=True,
@@ -140,6 +174,26 @@ def _make_tool_executor(te_cfg: dict, run_id: str):
                 structured={"call_name": call_name},
             )
         try:
+            # Built-in sandboxed helpers (read_file / list_files / glob_files).
+            # Accept both "builtin:NAME" and bare NAME when NAME is known.
+            builtins = builtins_by_name()
+            bare_name = call_name[8:] if call_name.startswith("builtin:") else call_name
+            if bare_name in builtins:
+                tool = builtins[bare_name]
+                try:
+                    result_dict = tool.invoke(Path("."), **(call_args or {}))
+                except Exception as exc:  # noqa: BLE001
+                    return ToolExecResult(
+                        is_error=True,
+                        text=f"builtin {tool.name} crashed: {type(exc).__name__}: {exc}",
+                    )
+                is_err = not result_dict.get("ok", True)
+                return ToolExecResult(
+                    is_error=is_err,
+                    text=None if is_err else str(result_dict.get("content") or result_dict.get("entries") or result_dict.get("matches") or ""),
+                    structured=result_dict,
+                )
+
             if call_name.startswith("mcp:"):
                 rest = call_name[4:]
                 if "/" not in rest:
@@ -148,11 +202,15 @@ def _make_tool_executor(te_cfg: dict, run_id: str):
                         text=f"invalid mcp tool name: {call_name} (expected mcp:<server>/<tool>)",
                     )
                 server_key, tool = rest.split("/", 1)
-                server_cmd = mcp_servers.get(server_key)
+                server_cmd = _resolve_mcp_server(server_key)
                 if not server_cmd:
                     return ToolExecResult(
                         is_error=True,
-                        text=f"mcp server {server_key!r} not configured in routing_config.tool_executor.mcp_servers",
+                        text=(
+                            f"mcp server {server_key!r} not found. Register it in "
+                            "~/.gemini/settings.json mcpServers, or pass it explicitly "
+                            "via routing_config.tool_executor.mcp_servers."
+                        ),
                     )
                 spec = McpServerSpec(
                     name=server_key, transport="stdio", command=list(server_cmd)
@@ -229,21 +287,91 @@ class _ModuleLinterAdapter:
         return self._m.lint_workflow(workflow)
 
 
-def _seed_user_input(state: dict, user_input: str) -> dict:
-    """Put the user_input into the entry agent's inbox as the first message."""
+_PATH_LIKE_RE = re.compile(
+    r"(?:[A-Za-z]:)?[\w\-./][\w\-./~]*\.[\w]{1,8}"
+)
+
+
+def _extract_referenced_files(user_input: str, project_root: Path) -> list[tuple[str, str]]:
+    """Best-effort: find project-relative file paths mentioned in ``user_input``
+    and return ``[(path, truncated_content), ...]`` for those that exist.
+
+    Only files under ``project_root`` and ≤ 64 KiB each are loaded. Result is
+    capped at 5 files and 128 KiB aggregate so we don't balloon the first
+    inbox message.
+    """
+    loaded: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    aggregate = 0
+    for m in _PATH_LIKE_RE.finditer(user_input or ""):
+        candidate = m.group(0).strip(" .,;:()[]{}\"'`")
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        # Resolve relative to project root; reject paths that escape.
+        try:
+            target = (project_root / candidate).resolve()
+            target.relative_to(project_root)
+        except (ValueError, OSError):
+            continue
+        if not target.is_file():
+            continue
+        try:
+            data = target.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if len(data) > 64 * 1024:
+            data = data[: 64 * 1024] + "\n\n... [truncated at 64KiB]"
+        aggregate += len(data)
+        if aggregate > 128 * 1024:
+            break
+        loaded.append((candidate, data))
+        if len(loaded) >= 5:
+            break
+    return loaded
+
+
+def _seed_user_input(state: dict, user_input: str, *, project_root: Path | None = None) -> dict:
+    """Put ``user_input`` into the entry agent's inbox as the first message.
+
+    If ``project_root`` is provided, also attach any files mentioned in
+    ``user_input`` (existing + under the root) as ``artifacts`` in the seed
+    state so every agent can see them. This is a pragmatic workaround for
+    v0.1.x which does not yet plumb Gemini function-calling — agents can't
+    browse the filesystem, but they can read pre-loaded content.
+    """
     registry = state.get("registry", [])
     if not registry:
         return state
     entry_id = registry[0]["id"]
+
+    attached: list[tuple[str, str]] = []
+    if project_root is not None:
+        attached = _extract_referenced_files(user_input, project_root)
+
+    message_parts = [f"User request: {user_input}"]
+    if attached:
+        message_parts.append("")
+        message_parts.append("Referenced files (pre-loaded; read from this inbox, do NOT ask for them again):")
+        for path, _ in attached:
+            message_parts.append(f"- {path}")
     message = {
         "from_id": "user",
-        "content": user_input,
+        "content": "\n".join(message_parts),
         "kind": "request",
     }
     inbox = dict(state.get("inbox") or {})
     inbox[entry_id] = list(inbox.get(entry_id, [])) + [message]
+
     new_state = dict(state)
     new_state["inbox"] = inbox
+    if attached:
+        # Stash file contents as artifacts so subsequent agents in the graph
+        # can also read them (the inbox message only goes to the entry agent).
+        artifacts = dict(new_state.get("artifacts") or {})
+        for path, content in attached:
+            artifacts[f"input/{path}"] = content
+        new_state["artifacts"] = artifacts
     return new_state
 
 
@@ -327,14 +455,17 @@ def run_harness(
         repo_root=root,
     )
 
-    tool_executor_deps: ToolExecutorDeps | None = None
     rc = workflow.get("routing_config", {}) or {}
-    te_cfg = rc.get("tool_executor")
-    if te_cfg:
-        tool_executor_deps = ToolExecutorDeps(
-            executor=_make_tool_executor(te_cfg, run_id),
-            repo_root=root,
-        )
+    te_cfg = rc.get("tool_executor") or {}
+    # Always wire a tool_executor — even when the workflow doesn't explicitly
+    # request one — so agents with `file-manager` in their tools list get the
+    # built-in sandboxed fallbacks and so ``mcp:<server>/<tool>`` labels can be
+    # resolved against the user's Gemini CLI settings. ``allowed_tools`` /
+    # ``mcp_servers`` from workflow routing_config still take precedence.
+    tool_executor_deps = ToolExecutorDeps(
+        executor=_make_tool_executor(te_cfg, run_id),
+        repo_root=root,
+    )
 
     checkpoint_path = root / "_workspace" / "checkpoints" / f"{run_id}.db"
     checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
@@ -357,7 +488,7 @@ def run_harness(
         needs_parallel = False
 
     seed = initial_state(workflow, run_id=run_id)
-    seed = _seed_user_input(seed, user_input)
+    seed = _seed_user_input(seed, user_input, project_root=root)
 
     config = {
         "configurable": {"thread_id": run_id},

@@ -63,6 +63,29 @@ Rules:
 - Return valid JSON with no trailing commas, no comments
 - **Sandbox paths**: agents may only write under `_workspace/`, `.agents/`, or `.gemini/`. Anything else is rejected. Each agent's system_prompt_body MUST include a line like "본 에이전트의 산출물은 `_workspace/<agent_id>/...` 경로에만 저장한다" in the 입력/출력 프로토콜 section so the model emits valid paths. Blog posts, reports, drafts → `_workspace/`. Generated code templates → `.agents/`. Event logs → `.gemini/`.
 
+- **Input sourcing** (tool-use priority, follow this order exactly):
+
+  **Priority 1 — pre-collected context in `user_input` / `artifacts` / `inbox`.**
+  The `/harness:run` slash command asks Gemini CLI to use its OWN native tools (file-manager, google-search, any user-registered MCP servers) to collect data BEFORE invoking harness.run. The resulting content arrives in the first inbox message and in `state.artifacts["input/*"]`. Agents consume this directly.
+
+  **Priority 2 — mid-run requests via `send_messages`.**
+  If an agent discovers during its reasoning that it needs more data that the orchestrator did not pre-collect, it emits:
+  `{"send_messages": [{"to": "user", "kind": "external_request", "content": "<what is needed and why>"}]}` plus a `status_update` of "waiting_for_external" and returns. Manager surfaces this in the run response; Gemini CLI can resolve it with its native tools and resume via `harness.run(resume=true)`.
+
+  **Priority 3 — agent tool_calls** (ONLY when the runtime wires tools; if `agent.tools` is empty, skip this).
+  Supported labels in `agent.tools`:
+  - `file-manager` — agent may use `read_file`, `list_files`, `glob_files` (our sandboxed fallback when Gemini CLI pre-collection isn't feasible)
+  - `mcp:<server>/<tool>` — proxied to the user's existing MCP server (reusing their validated stack)
+  - `google-search` — **reserved for v0.2** (not yet dispatched; do NOT put on agent.tools in v0.1.x, use Priority 1 instead)
+
+  **Priority 4 — meta-agent creation.**
+  If a genuinely new capability is needed that none of the above satisfies, emit `create_agents` / `create_skills` to spawn a specialist.
+
+  Every system_prompt_body MUST include a "## 입력 획득 규칙" section (Korean) that enumerates these priorities and declares which ones the specific agent will use. Do NOT reinvent functions that the user's Gemini CLI already provides — that's the anti-pattern we're guarding against.
+
+  Example phrase (verbatim or paraphrased, in agent's voice):
+  > "본 에이전트는 우선 inbox + artifacts의 pre-collected 데이터를 사용한다. 부족하면 `send_messages`로 사용자(Gemini CLI)에게 요청한다. tool_calls는 agent.tools에 명시된 것만 최소 사용한다. 허구 금지."
+
 If you cannot produce a valid design, return:
 {"error": "<reason>"}
 """

@@ -1,0 +1,49 @@
+description = "현재 프로젝트의 하네스 이력·상태를 한눈에 요약. 새 세션에서 '지금까지 뭐 했지?' 물을 때."
+
+prompt = """
+현재 프로젝트 디렉토리의 하네스 상태를 종합 보고하세요. **당신의 file-manager 도구**를 사용해 다음 순서로 읽고 요약합니다. 하네스 MCP 호출은 마지막 `harness.audit` 한 번만.
+
+## 1. 최소 컨텍스트 — 빠른 지도
+
+파일이 존재하는지 확인하고, 있으면 핵심만 발췌:
+
+1. `CLAUDE.md` — 프로젝트 목적 + **변경 이력 테이블**. 테이블 행 수와 가장 최근 3개 행을 보여주세요
+2. `workflow.json` — 있으면 `pattern`, `initial_registry[].id` 목록, `routing_config` 요약
+3. `.gemini/context.md` — 있으면 **최근 20~30줄**만 tail. "가장 최근 실행"의 에이전트 흐름이 여기 있음
+
+## 2. 에이전트·스킬 인벤토리
+
+- `.agents/` 디렉토리 list → 에이전트 ID 목록
+- 각 에이전트의 `SYSTEM_PROMPT.md`에서 **## 핵심 역할** 섹션 첫 1~2줄만 발췌 (모든 에이전트를 나열하지 말고 최대 7개까지)
+- `.agents/skills/` → 스킬 이름 목록
+
+## 3. 산출물 스냅샷
+
+- `_workspace/` 디렉토리 list
+- 눈에 띄는 에이전트별 산출물 폴더 (예: `_workspace/{agent}/…`) 이름 나열
+- `_workspace/adr/` 있으면 ADR 개수와 제목 목록
+
+## 4. 체크포인트·재개 가능성
+
+- `_workspace/checkpoints/*.db` 파일이 있는가? 파일명에서 **최근 run_id** 추출
+- 있으면 "이어서 실행할 수 있음" 명시 + 명령 예시 제공:
+  - `/harness:run "계속 진행" --run-id=<latest>` (슬래시 명령 지원 시)
+  - 또는 `mcp_harness_harness_run(..., run_id="<latest>", resume=true)` 직접 호출
+
+## 5. 기계적 감사 (선택)
+
+`mcp_harness_harness_audit`을 호출해 drift/schema 위반 여부만 확인. 드리프트가 없으면 "구조 정상"으로만 보고, 있으면 위 요약 뒤에 "⚠️ 발견된 불일치" 섹션 추가.
+
+## 6. 다음 단계 제안
+
+요약 후, 현재 상태에 맞춰 다음 행동 중 하나를 **자연어로 제안만** (자동 실행 금지):
+- "이어서 실행 (체크포인트 재개)"
+- "새 입력으로 다시 실행 (/harness:run)"
+- "하네스 구성 수정 (/harness:evolve)"
+- "검증만 재실행 (/harness:verify)"
+- "처음부터 다시 구축 (/harness:build, force 필요)"
+
+## 형식
+
+보고는 마크다운 헤더로 구조화. 파일이 아예 없으면 "이 프로젝트에는 아직 하네스가 구성되지 않았습니다. /harness:build로 시작하세요."로 답하고 종료.
+"""

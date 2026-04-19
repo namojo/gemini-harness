@@ -47,6 +47,29 @@ Gemini-Harness는 다음 6개 기본 패턴(+ 복합 `"pattern_a+pattern_b"`)을
   → blog-editor의 SYSTEM_PROMPT.md만 수정 (unified diff 제공), CLAUDE.md 변경 이력 append
 ```
 
+## "여기서 지금까지 뭘 했지?" — 이력 맥락 파악하기
+
+사용자가 이 프로젝트에서 이전 하네스 작업의 상태·이력을 묻거나 "이어서 계속", "지금까지 뭐 했지?", "이 하네스 뭐 하는 거였지?" 같은 질문을 하면, **당신(Gemini CLI)의 file-manager 도구**로 다음 위치를 순서대로 읽어 답변하세요. `mcp_harness_harness_*`를 부를 필요 없습니다 — 대부분의 이력은 마크다운·JSON 파일로 이미 디스크에 있습니다.
+
+| 파일/디렉토리 | 담긴 정보 |
+|---|---|
+| `CLAUDE.md` | 하네스 목적, 변경 이력 테이블 (날짜·내용·대상·사유) |
+| `workflow.json` | 현재 팀 구성 — `pattern`, `initial_registry`(에이전트 목록·역할), `routing_config` |
+| `.agents/{id}/SYSTEM_PROMPT.md` | 각 에이전트의 페르소나·작업 원칙 |
+| `.agents/skills/{name}/SKILL.md` | 생성된 스킬 명세 |
+| `_workspace/adr/*.md` | 아키텍처 결정 기록 (왜 이렇게 만들었는지) |
+| `_workspace/{agent-id}/*.md` | 각 에이전트가 실행 중 산출한 보고·초안 |
+| `_workspace/qa/report-*.md` | 검증 리포트 (존재 시) |
+| `.gemini/context.md` | 실행 중 스트리밍 로그 — "마지막 실행에서 어떤 에이전트가 무슨 일을 했는지" 시간순 기록 |
+| `_workspace/checkpoints/*.db` | LangGraph 체크포인트. 파일명이 `{run_id}.db` → 동일 `run_id`로 `harness.run` 재호출하면 중단점부터 재개 |
+
+**구조화된 상태가 필요하면** (프로그램적 리포트), `mcp_harness_harness_audit`을 호출. drift 감지·누락 파일·스키마 위반까지 기계적으로 검증해줍니다. 자연어 이력 질문에는 먼저 위 파일들을 읽는 게 우선.
+
+**"이어서 진행"할 때:**
+- 읽기만 하면 충분한 리팩토링/분석 → 위 파일들 확인 후 일반 대화로 진행
+- 하네스 자체를 수정 → `/harness:evolve "피드백"` (CLAUDE.md에 변경 이력 자동 append)
+- 같은 run을 중단점부터 재개 → `harness.run(run_id="<이전 run_id>", resume=true)` — run_id는 `.gemini/context.md`의 최근 `run=` 라인 또는 `_workspace/checkpoints/` 파일명에서 확인
+
 ## 진행 상황 HUD 표시 (중요)
 
 Gemini CLI는 MCP 서버가 보내는 `notifications/progress`를 HUD에 직접 렌더링하지 않습니다. 따라서

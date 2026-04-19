@@ -41,9 +41,11 @@ from typing import Any
 
 import yaml
 
+from .builtin_tools import select_builtins_for_agent
 from .contracts import GeminiClient, GeminiResponseLike, MetaLinter, ToolCallDecl
 from .sandbox import SandboxViolation, resolve_safe
 from .state import AgentMetadata, HarnessState, Message, ToolCall, find_agent
+from .tool_discovery import discover_mcp_servers
 
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n(.*)$", flags=re.DOTALL)
 
@@ -283,6 +285,80 @@ def _tool_calls_to_state(
     return out
 
 
+def _build_tool_declarations(
+    *,
+    agent_tools: list[str],
+    repo_root: Path,
+) -> list[Any]:
+    """Turn ``agent.tools`` labels into Gemini function declarations.
+
+    Resolves in priority order (see ``builtin_tools.py`` docstring):
+      1. ``mcp:<server>/<tool>`` — if ``<server>`` is in the user's
+         Gemini CLI settings, expose the specific tool name as a Gemini
+         function-call. tool_executor routes via mcp_adapter.
+      2. ``file-manager`` / ``read-file`` / ``list-files`` / ``glob`` —
+         activate our sandboxed Python fallback (builtin:*).
+
+    Labels we do NOT currently auto-wire (agents should rely on
+    pre-collection or send_messages instead):
+      - ``google-search``
+      - ``write_todos`` (client-only anyway)
+    """
+    from .contracts import ToolDecl
+
+    decls: list[Any] = []
+    seen: set[str] = set()
+
+    # Built-in fallbacks (file ops).
+    for tool in select_builtins_for_agent(agent_tools):
+        if tool.name in seen:
+            continue
+        seen.add(tool.name)
+        decls.append(
+            ToolDecl(
+                name=tool.name,
+                description=tool.description,
+                parameters_json_schema=tool.parameters_json_schema,
+            )
+        )
+
+    # External MCP proxy. We only surface mcp:<server>/<tool> labels whose
+    # server is actually discoverable — otherwise the tool_call would fail.
+    mcp_labels = [t for t in agent_tools if isinstance(t, str) and t.startswith("mcp:")]
+    if mcp_labels:
+        try:
+            discovered = discover_mcp_servers(repo_root)
+        except Exception:
+            discovered = {}
+        for label in mcp_labels:
+            rest = label[4:]
+            if "/" not in rest:
+                continue
+            server_name, tool_name = rest.split("/", 1)
+            if server_name not in discovered:
+                continue
+            decl_name = f"mcp__{server_name}__{tool_name}"
+            if decl_name in seen:
+                continue
+            seen.add(decl_name)
+            decls.append(
+                ToolDecl(
+                    name=decl_name,
+                    description=(
+                        f"Proxy call to the user's ``{server_name}`` MCP server "
+                        f"(tool ``{tool_name}``). Arguments and return shape are "
+                        "defined by that server — pass whatever dict the remote "
+                        "tool expects."
+                    ),
+                    parameters_json_schema={
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                )
+            )
+    return decls
+
+
 def make_worker_node(deps: WorkerDeps):
     """Return a worker_node bound to the provided dependencies."""
     repo_root = Path(deps.repo_root).resolve()
@@ -332,12 +408,21 @@ def make_worker_node(deps: WorkerDeps):
         )
 
         temperature = float(agent.get("temperature", 0.7))
+        # Build tool declarations from agent.tools: built-in file-manager
+        # helpers + any external MCP servers discovered in project/user
+        # Gemini CLI settings. Absent agent.tools ⇒ no function-calling
+        # ⇒ agent replies with plain JSON text only.
+        declarations = _build_tool_declarations(
+            agent_tools=list(agent.get("tools") or []),
+            repo_root=repo_root,
+        )
         response = deps.gemini(
             prompt=prompt,
             system=system_prompt,
             temperature=temperature,
             node="worker",
             run_id=state.get("run_id", "unknown"),
+            tools=declarations or None,
         )
 
         # Tool-call branch: stash calls, return — Manager will route to executor.

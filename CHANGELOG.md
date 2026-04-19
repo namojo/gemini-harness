@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-19
+
+### Added
+- **Tool reuse hierarchy.** Harness now prefers reusing the user's existing tools over reimplementation, in this order:
+  1. Gemini CLI native tools (file-manager, google-search, registered MCP servers) — invoked by Gemini CLI **before** calling `harness.run` via the updated `/harness:run` slash-command prompt. Result: the most common case (review specific files) needs no harness tool-calling at all.
+  2. User-installed MCP servers proxied via new `runtime/tool_discovery.py`. Reads `~/.gemini/settings.json` and project-local `./.gemini/settings.json`, exposes their tools as `mcp:<server>/<tool>` in agent `tools` lists.
+  3. Last-resort sandboxed Python helpers in new `runtime/builtin_tools.py`: `read_file`, `list_files`, `glob_files`. Activated only when agent declares `file-manager` / `read-file` / etc. and priorities 1-2 are unavailable.
+  4. Meta-agent creation when none of the above covers the need.
+- **`/harness:status` slash command** — "이 폴더에서 지금까지 뭘 했지?" one-shot project overview. Uses Gemini CLI's `file-manager` to read `CLAUDE.md`, `workflow.json`, `.agents/*/SYSTEM_PROMPT.md`, `_workspace/`, `.gemini/context.md`, and `_workspace/checkpoints/` for a resumable-state summary. No auto-detection code — the map of history files lives in GEMINI.md so Gemini CLI's LLM can orient itself via native tools alone.
+- **Architect prompt input-sourcing contract.** Generated agents now include an explicit "## 입력 획득 규칙" section enforcing the 4-priority hierarchy. No more fabricated tool calls or placeholder SYSTEM_PROMPT bodies.
+- **File pre-load in `_seed_user_input`** — when `user_input` mentions project-relative files that exist, their contents (≤64 KiB each, ≤128 KiB total, max 5 files) are attached as `artifacts["input/<path>"]` so every agent can read them without any tool call.
+- 5 regression tests for file pre-loading (`tests/unit/test_file_preload.py`).
+
+### Changed
+- `runtime/worker.py` now resolves `agent.tools` into Gemini function declarations via `_build_tool_declarations` (bridges built-ins + discovered MCP servers). Worker passes them to `gemini_client.call(..., tools=...)` on every dispatched turn.
+- `runtime/_run.py`:
+  - `_make_tool_executor` gains `builtin:` transport and lazy MCP server discovery from `~/.gemini/settings.json` — no need to replicate server commands in `routing_config.tool_executor.mcp_servers`.
+  - tool_executor is now **always wired**, even without explicit workflow-level `tool_executor` config, so the builtin fallbacks and discovered MCP servers are available in every run.
+- `GEMINI.md` gained a "여기서 지금까지 뭘 했지?" section that maps history files for Gemini CLI's LLM.
+- `commands/harness/run.toml` prepends a "0단계" telling Gemini CLI to pre-collect context via its native tools before invoking `harness.run`.
+
+### Fixed
+- Test assertion wording for the `mcp_server_not_configured` case (now accepts both legacy "not configured" and new "not found" phrasings).
+
 ## [0.1.2] - 2026-04-19
 
 ### Fixed

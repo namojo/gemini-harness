@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-19
+
+### Changed (UX — prompt-only, no runtime code change)
+- **Terminal-friendly output for parallel runs.** Reported symptom was the Gemini CLI HUD rendering `write_todos` as a large panel (*"first 54 lines hidden"*) plus Plan-mode overlay, which overwhelms narrow terminals during fan-out execution.
+  - `commands/harness/run.toml`: `write_todos` is now **opt-in**, called at most **once after `harness.run` completes**, and only when the user explicitly asks for a status display. The default path shows a single concise markdown summary block instead of two `write_todos` panels.
+  - Strict 30-char budget for todo descriptions when `write_todos` IS used: emoji status + short alias + ≤2-word role label. Copying full `role` strings into descriptions is explicitly forbidden.
+  - Plan-mode description capped at 60 chars.
+- `GEMINI.md`: new "터미널 친화 출력 (Terminal-friendly output)" principles so every slash command follows the same restraint. Documents that `harness.run` is blocking, so mid-run `write_todos` updates never provided real-time feedback — the previous pre-run + post-run dual call only added visual noise.
+
+Since `harness.run` is blocking, the earlier dual-call strategy was HUD theatre: we now emit progress through the returned `agent_timeline` and a short natural-language summary, keeping the terminal legible.
+
 ## [0.1.3] - 2026-04-19
 
 ### Added

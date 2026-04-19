@@ -56,7 +56,7 @@
 pip install gemini-harness
 
 # PyPI (아직 배포전이라 이걸 받으세요)
-pip install -i https://test.pypi.org/simple/ gemini-harness==0.1.3
+pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ gemini-harness==0.1.4
 
 # 또는 소스에서
 git clone https://github.com/namojo/gemini-harness

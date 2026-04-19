@@ -1,6 +1,8 @@
 # gemini-harness
 
-**Team-architecture factory for Gemini CLI.** Turn a one-sentence domain description into a coordinated team of Gemini agents and the skills they use — powered by LangGraph.
+**한국어** · [English](./README_EN.md)
+
+**Gemini CLI용 팀 아키텍처 팩토리.** 도메인 한 문장을 Gemini 에이전트 팀과 그들이 쓸 스킬로 변환합니다 — LangGraph 기반.
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](./LICENSE)

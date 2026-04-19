@@ -56,7 +56,7 @@
 pip install gemini-harness
 
 # From TestPyPI (pre-release, recommended while we're in beta):
-pip install -i https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ gemini-harness==0.1.4
+pip install -i https://test.pypi.org/simple/ gemini-harness
 
 # Or from source
 git clone https://github.com/namojo/gemini-harness

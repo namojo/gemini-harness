@@ -70,18 +70,31 @@ Gemini-Harness는 다음 6개 기본 패턴(+ 복합 `"pattern_a+pattern_b"`)을
 - 하네스 자체를 수정 → `/harness:evolve "피드백"` (CLAUDE.md에 변경 이력 자동 append)
 - 같은 run을 중단점부터 재개 → `harness.run(run_id="<이전 run_id>", resume=true)` — run_id는 `.gemini/context.md`의 최근 `run=` 라인 또는 `_workspace/checkpoints/` 파일명에서 확인
 
-## 진행 상황 HUD 표시 (중요)
+## 진행 상황 HUD 표시 + 터미널 친화 출력 (중요)
 
-Gemini CLI는 MCP 서버가 보내는 `notifications/progress`를 HUD에 직접 렌더링하지 않습니다. 따라서
-`harness.run` 같은 장시간 실행 도구를 호출할 때는 **반드시 아래 순서**를 따르세요:
+Gemini CLI는 MCP 서버가 보내는 `notifications/progress`를 HUD에 직접 렌더링하지 않습니다. 대신
+`write_todos` 내장 도구가 입력 프롬프트 위 HUD를 만듭니다. 단, 이 HUD도 **터미널 행 수를 잡아먹기
+때문에 절제해서** 쓰세요.
 
-1. **실행 전:** `workflow.json`을 읽어 `initial_registry` 에이전트 목록을 확보 →
-   `write_todos`를 호출해 각 에이전트를 `pending` 항목으로 등록. 이게 사용자가 보는 "현재 어떤 팀이
-   일하고 있는지"의 유일한 UI 경로입니다.
-2. **실행 중:** `mcp_harness_harness_run`을 호출 (블로킹). MCP 서버는 내부적으로 `.gemini/context.md`에
-   실시간 로그를 append 하므로 고급 사용자는 별도 창에서 `tail -f`할 수 있습니다.
-3. **실행 후:** 응답의 `final_registry` 상태로 `write_todos`를 다시 호출해 각 항목을 `completed` 또는
-   `blocked`로 갱신. 에러가 있는 에이전트는 `blocked`로 표시하고 해결 방안을 제안하세요.
+**좁은 터미널 대응 원칙:**
+
+1. **`write_todos`는 기본 호출 안 함.** `harness.run`은 블로킹이라 중간 갱신이 불가능하고, 긴 todo
+   패널이 오히려 가독성을 해칩니다. 완료 후 자연어 한 블록 요약이 디폴트.
+2. **사용자가 "진행 상태 보여줘"처럼 명시적으로 요청한 경우에만** `write_todos` 1회 호출.
+   - 각 todo `description`은 **30자 이내**: 아이콘(✅/⚠/❌) + 짧은 별칭 + 최대 2단어 역할
+   - 예: `"✅ frontend · FE 설계"`, `"⚠ db · 블로킹"`
+3. **Plan mode 설명도 60자 이내로** — 긴 한 문단 금지.
+4. **결과는 마크다운 테이블보다 한 줄 요약** 선호 — 열 수를 줄여 좁은 터미널에서도 wrap 없이 보이게.
+5. 상세 출력은 사용자가 "상세"를 명시 요청할 때만.
+
+자세한 규칙은 `/harness:run` 슬래시 명령 프롬프트(`commands/harness/run.toml`) 참조.
+
+**일반 흐름:**
+
+1. **실행 전:** 필요한 입력을 당신의 도구로 pre-collect하여 `user_input`에 동봉.
+2. **실행 중:** `mcp_harness_harness_run` 블로킹 호출. 내부적으로 `.gemini/context.md`에 실시간 로그가
+   append되므로 고급 사용자는 별도 창에서 `tail -f`할 수 있음.
+3. **실행 후:** 응답의 `agent_timeline`으로 **한 블록** 요약. `write_todos`는 요청 시에만.
 
 ## 경로 규칙
 

@@ -5,66 +5,83 @@ prompt = """
 
 ## 0단계 — **먼저 당신(Gemini CLI)이 가진 도구로 컨텍스트 수집**
 
-harness.run은 별도 프로세스에서 실행되므로 당신의 내장 도구(file-manager, google-search, write_todos, 기타 등록된 MCP 서버)에 접근할 수 없습니다. **따라서 실행을 시작하기 전에 반드시 당신이 직접 필요한 데이터를 수집해 user_input에 동봉**하세요. 이 단계가 "재구현 대신 재사용"의 핵심 경로입니다.
+harness.run은 별도 프로세스에서 실행되므로 당신의 내장 도구(file-manager, google-search, 등록된 MCP 서버)에 접근할 수 없습니다. **따라서 실행 전에 필요한 데이터를 수집해 user_input에 동봉**하세요.
 
-판단 기준:
-- 사용자가 파일 경로를 언급했는가? → **file-manager로 읽어서** 내용을 user_input에 첨부
-- 디렉토리/글롭이 필요한가? → `glob` / `list` 결과를 첨부
-- 외부 지식이 필요한가? → **google-search 또는 등록된 MCP 서버**로 조회 결과 첨부
-- 사용자의 다른 MCP 서버(github, slack, db 등)가 필요한가? → 해당 도구 호출 후 결과 첨부
+판단:
+- 사용자가 파일 경로 언급 → file-manager로 읽어서 user_input에 첨부
+- 디렉토리/글롭 필요 → glob/list 결과 첨부
+- 외부 지식 필요 → google-search 또는 등록된 MCP 서버 조회 결과 첨부
 
-수집이 끝나면 user_input을 구조화된 형태로 확장하세요. 예:
+**절대 금지:** 수집 없이 곧바로 harness.run 호출 → 에이전트들이 허구 생성 또는 파일 요청으로 멈춤.
 
-```
-원문 요청:
-{{args}}
+## 1단계 — 진행 안내 (짧게)
 
-[참조 파일]
-- src/gemini_harness/cli.py:
-```python
-<파일 내용 전체 또는 발췌>
-```
+`workflow.json`을 Read로 읽고 에이전트 수만 확인.
 
-[검색 결과]
-- Python argparse 모범 사례: …
-```
+**write_todos 호출은 생략**합니다 — 이유:
+- harness.run은 블로킹이라 중간 업데이트가 불가능
+- 병렬 실행은 MCP 서버 내부에서 일어나므로 실시간으로 HUD를 갱신할 수 없음
+- 긴 todo 패널이 좁은 터미널을 점유하면 가독성이 떨어짐
 
-**절대 하지 말 것:** 수집 없이 곧바로 harness.run 호출 → 내부 에이전트들이 허구의 사실을 생성하거나 "파일이 필요하다"며 멈춤.
-
-## 1단계 — 실행 계획 HUD 표시
-
-`workflow.json`을 Read로 읽어 `initial_registry` 목록 확보 → `write_todos`로 각 에이전트를 `pending`으로 등록:
-
-```
-write_todos(todos=[
-  {"description": "{{agent.id}}: {{agent.role 첫 50자}}", "status": "pending"},
-  ...
-])
-```
+대신 **한 줄 자연어 안내**로:
+> 🚀 harness 실행 시작 — {pattern} 패턴, {N}명 에이전트, 예상 {estimated}초.
 
 ## 2단계 — harness.run 호출
 
-`mcp_harness_harness_run` 도구 파라미터:
-- `project_path`: 현재 작업 디렉토리 절대 경로
-- `user_input`: 0단계에서 확장된 **pre-collected 콘텐츠 포함 버전**
+`mcp_harness_harness_run` 파라미터:
+- `project_path`: 절대 경로
+- `user_input`: 0단계에서 확장된 pre-collected 콘텐츠 포함 버전
 - `step_limit`: 기본 50 (간단히 언급 시 15)
 
-실행에는 수십 초~수 분이 걸립니다.
+## 3단계 — 완료 직후 HUD 단 1회 갱신 (필요시에만)
 
-## 3단계 — 완료 후 HUD 업데이트
+응답을 받은 **직후 단 한 번**, 최종 결과를 `write_todos`로 기록합니다. **사용자가 요청한 경우에만** 호출하고, 기본은 생략:
 
-응답의 `agent_timeline`을 사용해 `write_todos` 재호출. `status`는 응답의 각 항목 그대로 매핑:
-- `completed` → `"completed"`
-- `blocked` → `"blocked"` (에러가 있는 에이전트)
-- `idle` → `"cancelled"` (실행되지 않은 에이전트)
+### 기본(간결): write_todos **호출 안 함**
+곧바로 4단계의 텍스트 요약만 보여줍니다. 가장 터미널 친화적.
 
-## 4단계 — 결과 요약 + 후속 처리
+### 선택(요청 시): `write_todos` 단 1회
+사용자가 "진행 상태 보여줘" 같은 요청을 했다면, **짧은 한 줄 항목**으로만 갱신:
 
-응답 중 다음을 사용자에게 보고:
+```json
+write_todos(todos=[
+  {"description": "✅ 하네스 실행 (N/M · Ks)", "status": "completed"},
+  {"description": "✅ frontend · FE", "status": "completed"},
+  {"description": "✅ backend · API", "status": "completed"},
+  {"description": "⚠ db · 블로킹", "status": "blocked"}
+])
+```
 
-- `steps`, `wall_clock_ms`: 성능 지표
-- `errors`: 비어있어야 정상
-  - `create_agent_loop_aborted` 있으면 에이전트 정의 문제 → `/harness:evolve` 제안
-- `artifacts`: 생성된 파일 경로. **가장 중요한 1~2개**를 file-manager로 읽어 핵심 20줄 정도 사용자에게 표시
-- **응답의 `history_tail`에서 에이전트가 `pending_requests`나 `needs_user_input` 같은 미처리 요청을 남겼다면 이를 명시적으로 보고하고, 필요 시 추가 정보 수집 후 `/harness:run`을 다시 호출(`resume=true`)** — 이게 "mid-run 요청 → 당신이 도구로 해결 → 재개" 프로토콜
+**description은 30자 이내 엄수**. 아이콘(✅/⚠/❌)만 앞에, 뒤는 에이전트 별칭 + 1~2단어 역할. 절대 full role 본문 복사 금지.
+
+## 4단계 — 결과 요약 (항상 실행, 터미널 친화적)
+
+다음 포맷으로 **압축**해서 마크다운 한 블록으로 보고:
+
+```
+## 🎯 harness.run 결과
+
+- **패턴:** {pattern} · {wall_clock_ms/1000}s · {input_tokens}→{output_tokens} tokens
+- **에이전트:** ✅ completed N / ⚠ blocked M / ⭕ idle K
+- **산출물:** {len(artifacts)} files · 주요: `_workspace/{agent}/report.md` …
+- **에러:** (있으면) `create_agent_loop_aborted` 같은 주요 오류만 1~2줄로
+
+### 핵심 산출물 미리보기
+
+(가장 중요한 산출물 1개만 file-manager로 읽고 처음 15~20줄 표시. 나머지는 경로만 나열)
+```
+
+## 5단계 — 후속 제안 (짧게)
+
+- 에이전트 정의 문제(loop_aborted 등) → `/harness:evolve "..."` 제안
+- 중단된 작업 재개 필요 → `harness.run(run_id="<기존>", resume=true)` 제안
+- 결과물 상세 확인 → `_workspace/{agent}/*.md` 경로 안내
+
+## 핵심 원칙 (좁은 터미널 대응)
+
+1. **write_todos는 부득이한 경우 1회**, 기본은 **호출 안 함**
+2. **todo description은 30자 이내** (아이콘 + 짧은 별칭 + 최대 2단어)
+3. **Plan mode 설명도 60자 이내**로 요약 — 긴 문단 금지
+4. 마크다운 테이블 행이 길어지지 않도록 열 수 최소화
+5. 사용자가 "상세"를 명시 요청할 때만 전체 출력
 """

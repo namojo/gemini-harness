@@ -69,6 +69,9 @@ pip install -e '.[dev]'
 ```bash
 # 리포 루트에서 실행 — gemini-extension.json, GEMINI.md, commands/를 자동 인식
 gemini extensions install /path/to/gemini-harness
+
+# Windows 환경이라면 아래와 같이 gemini-harness 폴더에서
+gemini extensions install .    
 ```
 
 ### 3) API 키 설정

@@ -69,6 +69,9 @@ pip install -e '.[dev]'
 ```bash
 # From the repo root — gemini-extension.json, GEMINI.md, and commands/ are picked up
 gemini extensions install /path/to/gemini-harness
+
+# If you are using Windows
+gemini extensions install .   
 ```
 
 ### 3) Set up the API key

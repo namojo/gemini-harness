@@ -64,6 +64,8 @@ cd gemini-harness
 pip install -e '.[dev]'
 ```
 
+> 💡 **Dependencies are declared in `pyproject.toml` under `[project.dependencies]` as the single source of truth, and pip resolves and installs them automatically.** The package list shown during install is normal output. We don't ship a separate `requirements.txt` because tracking versions in two places risks drift — if you need a reproducibility lock, generate one with `pip-compile` (e.g. `requirements.lock`).
+
 ### 2) Register as a Gemini CLI extension
 
 ```bash
@@ -129,6 +131,8 @@ LANGCHAIN_HARNESS_MODEL=gemini-2.0-flash gemini-harness run --project . --input 
 
 ### 5) Verify install
 
+> ⚠️ **If you skipped step 2 (extension registration), the output below will be empty.** `/mcp list` and `/commands` only read the manifests registered by `gemini extensions install` (`gemini-extension.json`, `commands/*.toml`) — they do not call the Gemini API, so the configured model has no effect on these two slash commands. Completing step 4 alone is not enough.
+
 ```bash
 gemini   # inside the REPL:
 > /mcp list
@@ -137,6 +141,8 @@ gemini   # inside the REPL:
 > /commands
 # /harness:build, /harness:audit, /harness:verify, /harness:evolve, /harness:run, /harness:status
 ```
+
+If empty, see [`/mcp list` or `/commands` doesn't show harness](#mcp-list-or-commands-doesnt-show-harness) under Troubleshooting.
 
 ## Usage
 
@@ -408,9 +414,31 @@ _workspace/adr/         # 5 Architecture Decision Records
 
 ## Troubleshooting
 
+### `/mcp list` or `/commands` doesn't show harness
+
+If `/mcp list` and `/commands` come up empty after step 5, **the extension is not registered with Gemini CLI**. `gemini-harness configure` (step 4, model selection) is just the Python package's CLI and is independent of Gemini CLI extension registration — and the chosen model ID (e.g. `gemini-3.1-pro-preview`) has no effect on these two slash commands, since both only read manifests and do not call the Gemini API.
+
+Diagnose in this order:
+
+```bash
+# 1. Gemini CLI version (≥ 0.28.0 required)
+gemini --version
+
+# 2. Is the extension registered?
+gemini extensions list
+
+# 3. If missing, register it (repo root or absolute path)
+gemini extensions install /path/to/gemini-harness
+
+# 4. Is the MCP server script on PATH?
+which gemini-harness-mcp
+```
+
+If you're using a container or running as root, **invoke `gemini extensions install` from the same user/shell that will run `gemini`** (Gemini CLI uses per-user `~/.gemini/` settings).
+
 ### `🔴 harness - Disconnected`
 
-The `gemini-harness-mcp` script may be installed to a Python user-bin dir not on `PATH` (common on macOS). `gemini-extension.json` works around this by launching the server with `python3 -m gemini_harness.mcp_server` — only `python3` needs to be on `PATH`, which your active shell always has. If you previously registered the server manually with `gemini mcp add`, remove the duplicate:
+The extension is registered but the MCP server process failed to start. The `gemini-harness-mcp` script may be installed to a Python user-bin dir not on `PATH` (common on macOS). `gemini-extension.json` works around this by launching the server with `python3 -m gemini_harness.mcp_server` — only `python3` needs to be on `PATH`, which your active shell always has. If you previously registered the server manually with `gemini mcp add`, remove the duplicate:
 
 ```bash
 gemini extensions uninstall gemini-harness 2>/dev/null

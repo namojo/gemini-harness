@@ -64,6 +64,8 @@ cd gemini-harness
 pip install -e '.[dev]'
 ```
 
+> 💡 **의존성은 `pyproject.toml`의 `[project.dependencies]`가 단일 소스(SoT)이며 pip가 자동으로 해결·설치합니다.** 설치 중 출력되는 패키지 목록은 정상 동작입니다. 별도 `requirements.txt`는 두 곳에서 버전을 관리하게 되어 drift 위험이 있어 두지 않습니다 — 재현성을 위한 lock이 필요하면 `pip-compile`로 별도 `requirements.lock`을 생성하세요.
+
 ### 2) Gemini CLI 익스텐션 등록
 
 ```bash
@@ -129,6 +131,8 @@ LANGCHAIN_HARNESS_MODEL=gemini-2.0-flash gemini-harness run --project . --input 
 
 ### 5) 설치 확인
 
+> ⚠️ **2) 익스텐션 등록을 건너뛰면 아래 출력이 비어 있습니다.** `/mcp list`와 `/commands`는 `gemini extensions install`로 등록된 매니페스트(`gemini-extension.json`, `commands/*.toml`)를 읽어서 표시합니다 — Gemini API를 호출하지 않으므로 모델 설정과 무관합니다. 4)까지 완료해도 2)를 안 했다면 둘 다 빈 결과가 나옵니다.
+
 ```bash
 gemini   # REPL 진입 후:
 > /mcp list
@@ -137,6 +141,8 @@ gemini   # REPL 진입 후:
 > /commands
 # /harness:build, /harness:audit, /harness:verify, /harness:evolve, /harness:run
 ```
+
+비어 있다면 아래 트러블슈팅의 [`/mcp list` 또는 `/commands`에 harness가 보이지 않음](#mcp-list-또는-commands에-harness가-보이지-않음) 항목 참조.
 
 ## Usage
 
@@ -408,9 +414,31 @@ _workspace/adr/         # 5개 ADR (아키텍처 결정 기록)
 
 ## Troubleshooting
 
+### `/mcp list` 또는 `/commands`에 harness가 보이지 않음
+
+설치 5)에서 `/mcp list`·`/commands`가 비어 있다면, **익스텐션이 Gemini CLI에 등록되지 않은 상태**입니다. `gemini-harness configure`(4단계, 모델 선택)는 Python 패키지의 CLI일 뿐이라 Gemini CLI 익스텐션 등록과는 별개이며, 모델 ID가 무엇이든(예: `gemini-3.1-pro-preview`) 이 두 슬래시 명령의 출력에는 영향을 주지 않습니다 — 둘 다 매니페스트만 읽고 Gemini API를 호출하지 않기 때문.
+
+다음 순서로 확인하세요:
+
+```bash
+# 1. Gemini CLI 버전 (≥ 0.28.0 필요)
+gemini --version
+
+# 2. 익스텐션 등록 여부
+gemini extensions list
+
+# 3. 누락이면 등록 (리포 루트 또는 절대 경로)
+gemini extensions install /path/to/gemini-harness
+
+# 4. MCP 서버 스크립트가 PATH에 있는지
+which gemini-harness-mcp
+```
+
+컨테이너 또는 root 환경에서 사용 중이라면, **`gemini extensions install`을 실제 `gemini` 명령을 실행하는 사용자/셸에서** 호출해야 합니다 (Gemini CLI는 사용자별 `~/.gemini/` 설정을 사용).
+
 ### `🔴 harness - Disconnected`
 
-`gemini-harness-mcp` 스크립트가 PATH에 없어서입니다. `gemini-extension.json`은 `python3 -m gemini_harness.mcp_server`로 호출하므로 이 문제가 해결되지만, 이전 버전을 설치했다면 uninstall 후 재설치:
+익스텐션은 등록됐지만 MCP 서버 프로세스가 시작되지 못한 상태입니다. `gemini-harness-mcp` 스크립트가 PATH에 없어서 발생할 수 있습니다. `gemini-extension.json`은 `python3 -m gemini_harness.mcp_server`로 호출하므로 이 문제가 해결되지만, 이전 버전을 설치했다면 uninstall 후 재설치:
 
 ```bash
 gemini extensions uninstall gemini-harness 2>/dev/null
